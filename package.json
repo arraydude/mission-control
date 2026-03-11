@@ -1,0 +1,42 @@
+{
+  "name": "tribe-mission-control",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "dispatch": "node scripts/dispatcher.mjs",
+    "dispatch:watch": "node scripts/dispatcher.mjs --watch",
+    "task": "node scripts/task-helper.mjs",
+    "task:status": "node scripts/task-status.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.2.0",
+    "@fontsource-variable/geist": "^5.2.8",
+    "@tanstack/react-query": "^5.90.21",
+    "better-sqlite3": "^12.6.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.577.0",
+    "next-themes": "^0.4.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    "tw-animate-css": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.4.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "shadcn": "^4.0.2",
+    "tailwindcss": "^4.2.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "tasks": [
+    {
+      "id": "ba4a8f34-dd19-4745-b6be-5de495b008a9",
+      "title": "Show identity emojis in Dashboard active agents and Agents view",
+      "description": "Use AGENT_IDENTITY_EMOJI_UI_PRD.md to add identity emoji to the Dashboard active agents section and throughout the Agents view wherever agent identity is represented, with graceful fallback.",
+      "priority": "medium",
+      "status": "done",
+      "assignedAgent": "mida",
+      "createdAt": 1773166576216,
+      "updatedAt": 1773168469152,
+      "comments": []
+    },
+    {
+      "id": "60d9b79f-eed6-4a04-a343-f77a57bd0398",
+      "title": "Show agent identity emoji in task assignees",
+      "description": "Use AGENT_IDENTITY_EMOJI_PRD.md to display each assigned agent's identity emoji next to their name in task cards and task detail surfaces, with graceful fallback if no emoji exists.",
+      "priority": "medium",
+      "status": "ready",
+      "assignedAgent": "mida",
+      "createdAt": 1773166521814,
+      "updatedAt": 1773166521814,
+      "comments": [],
+      "dispatch": {
+        "lastDispatchedAt": null,
+        "dispatchAttempts": 3,
+        "lastDispatchError": "Command failed: openclaw agent --agent mida -m [Mission Control Dispatch] Task: \"Show agent identity emoji in task assignees\" (id: 60d9b79f-eed6-4a04-a343-f77a57bd0398, priority: medium)\n\nDescription:"
+      }
+    },
+    {
+      "id": "a1687b14-5e5f-4b3f-aeda-6cdd6c2987ae",
+      "title": "Implement task editing in Mission Control",
+      "description": "Use TASK_EDITING_PRD.md to add clean task editing for existing tasks. Support editing title, notes, priority, status, and assigned agent from the UI with persistence and updatedAt refresh.",
+      "priority": "high",
+      "status": "ready",
+      "assignedAgent": "mida",
+      "createdAt": 1773166390523,
+      "updatedAt": 1773166390523,
+      "comments": [],
+      "dispatch": {
+        "lastDispatchedAt": null,
+        "dispatchAttempts": 3,
+        "lastDispatchError": "Command failed: openclaw agent --agent mida -m [Mission Control Dispatch] Task: \"Implement task editing in Mission Control\" (id: a1687b14-5e5f-4b3f-aeda-6cdd6c2987ae, priority: high)\n\nDescription:\nUse"
+      }
+    },
+    {
+      "id": "b4544377-b69a-44e2-8b8b-5be614901dcc",
+      "title": "Improve task creation form",
+      "description": "- Use a shadcn Dialog instead to show the form",
+      "priority": "medium",
+      "status": "inbox",
+      "assignedAgent": null,
+      "createdAt": 1773166267874,
+      "updatedAt": 1773166267874,
+      "comments": []
+    },
+    {
+      "id": "fc3b2bf8-78be-4c81-a85a-6306a277e9db",
+      "title": "Claude Code SubAgent",
+      "description": "Even that we have available claude code as CLI to use it as we want, I wonder if it would be nice to have a subagent representing this. I'd like you to do a research on this task",
+      "priority": "high",
+      "status": "done",
+      "assignedAgent": "main",
+      "createdAt": 1773155813963,
+      "updatedAt": 1773164689047,
+      "comments": [
+        {
+          "id": "4ed18c79-6a82-4083-8191-e84deeb53e14",
+          "author": "main",
+          "type": "result",
+          "createdAt": 1773164689047,
+          "text": "Research complete: Claude Code already works in two modes here—background CLI via coding-agent skill and ACP thread/session spawning. Recommendation: add a Claude preset/wrapper only if you want simpler UX, defaults, and telemetry; not as a separate orchestration primitive."
+        }
+      ]
+    },
+    {
+      "id": "52c84d90-efb7-4b02-8af7-69b0eb87b0a3",
+      "title": "Review recent Mission Control changes and learn from them",
+      "description": "Inspect the latest changes made to Mission Control, identify what changed in product/UI/UX direction, infer why those changes were made, and update your understanding for future iterations. Return: 1) changes detected, 2) what they improve, 3) what you learn for next iterations.",
+      "priority": "high",
+      "status": "done",
+      "assignedAgent": "mida",
+      "createdAt": 1773157037495,
+      "updatedAt": 1773161120000,
+      "comments": []
+    }
+  ]
+}
