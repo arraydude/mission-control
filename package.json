@@ -10,7 +10,8 @@
     "dispatch": "node scripts/dispatcher.mjs",
     "dispatch:watch": "node scripts/dispatcher.mjs --watch",
     "task": "node scripts/task-helper.mjs",
-    "task:status": "node scripts/task-status.mjs"
+    "task:status": "node scripts/task-status.mjs",
+    "github:review": "node scripts/github-review.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
