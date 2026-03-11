@@ -381,6 +381,15 @@ function AgentIdentityLabel({ agent, className = '' }: { agent: Pick<AgentCard, 
   )
 }
 
+function AgentIdentityText({ agentId, agent, className = '' }: { agentId: string; agent?: Pick<AgentCard, 'name' | 'identityEmoji'> | null; className?: string }) {
+  if (!agent) return <span className={className}>{agentId}</span>
+  return <AgentIdentityLabel agent={agent} className={className} />
+}
+
+function formatAgentOptionLabel(agent: Pick<AgentCard, 'name' | 'identityEmoji'>) {
+  return agent.identityEmoji ? `${agent.identityEmoji} ${agent.name}` : agent.name
+}
+
 const COLUMN_EMPTY_LABELS: Record<MissionTaskStatus, string> = {
   inbox: 'No new tasks',
   ready: 'Nothing queued',
@@ -472,7 +481,7 @@ function TaskCardItem({
                   ) : (
                     <UserRound className="h-2.5 w-2.5" aria-hidden="true" />
                   )}
-                  {task.assignedAgent ?? 'Unassigned'}
+                  {task.assignedAgent ? <AgentIdentityText agentId={task.assignedAgent} agent={assignedAgent} /> : 'Unassigned'}
                 </span>
               </TaskPill>
               {task.claim?.claimedBy && (
@@ -526,7 +535,7 @@ function TaskCardItem({
             {task.routing?.autoRouted && task.assignedAgent && (
               <span className="inline-flex items-center gap-1 text-violet-300">
                 <Route className="h-3 w-3" aria-hidden="true" />
-                Auto-routed to <span className="font-medium">{task.assignedAgent}</span>
+                Auto-routed to <span className="font-medium">{task.assignedAgent ? <AgentIdentityText agentId={task.assignedAgent} agent={assignedAgent} /> : null}</span>
               </span>
             )}
             {task.assignedAgent && !task.routing?.autoRouted && (
@@ -594,7 +603,7 @@ function TaskCardItem({
                   <Label className="text-xs text-zinc-500">Owner</Label>
                   <NativeSelect disabled={isSavingTask} value={editForm.assignedAgent} onChange={(e) => setEditForm((current) => ({ ...current, assignedAgent: e.target.value }))} className="w-full">
                     <NativeSelectOption value="">Unassigned</NativeSelectOption>
-                    {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{a.name}</NativeSelectOption>)}
+                    {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{formatAgentOptionLabel(a)}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
                 <div className="grid gap-1">
@@ -1535,7 +1544,14 @@ export default function App() {
                                 <TaskPill className={PRIORITY_TONES[t.priority]}>{t.priority}</TaskPill>
                               </div>
                               <div className="text-sm font-medium text-zinc-100">{t.title}</div>
-                              <div className="mt-1 text-xs text-zinc-400">{t.assignedAgent ? `Owner: ${t.assignedAgent}` : 'Unassigned'}</div>
+                              <div className="mt-1 text-xs text-zinc-400">
+                                {t.assignedAgent ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span>Owner:</span>
+                                    <AgentIdentityText agentId={t.assignedAgent} agent={agentsById.get(t.assignedAgent)} />
+                                  </span>
+                                ) : 'Unassigned'}
+                              </div>
                             </button>
                           ))}
                         </div>
@@ -1588,7 +1604,7 @@ export default function App() {
                               <Label className="text-xs text-zinc-400">Agent</Label>
                               <NativeSelect value={form.assignedAgent} onChange={(e) => setForm((c) => ({ ...c, assignedAgent: e.target.value }))}>
                                 <NativeSelectOption value="">Unassigned</NativeSelectOption>
-                                {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{a.name}</NativeSelectOption>)}
+                                {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{formatAgentOptionLabel(a)}</NativeSelectOption>)}
                               </NativeSelect>
                             </div>
                             <Button type="submit" disabled={submittingTask} className="border-orange-400/40 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20">
