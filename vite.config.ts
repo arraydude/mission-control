@@ -843,7 +843,7 @@ function missionControlApiPlugin() {
           input.assignedAgent = routing.agent
         }
 
-        const task = db.createTask(input)
+        const task = db.createTask(input, routing ? { autoRouted: true, routingReason: routing.routingReason } : undefined)
         dispatcher.onTaskCreated(task)
         sendJson(res, 201, { task, routing: routing ? { agent: routing.agent, reason: routing.routingReason, auto: true } : null })
         return
@@ -892,7 +892,7 @@ function missionControlApiPlugin() {
         }
       }
 
-      const task = db.patchTask(taskId, patch)
+      const task = db.patchTask(taskId, patch, routing ? { autoRouted: true, routingReason: routing.routingReason } : undefined)
       dispatcher.onTaskPatched(taskId, patch, previousTask, task)
       sendJson(res, 200, { task, routing })
     } catch (error) {
