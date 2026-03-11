@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig } from 'vite'
@@ -9,6 +10,7 @@ import tailwindcss from '@tailwindcss/vite'
 import * as db from './server/db.js'
 import * as dispatcher from './server/dispatcher.js'
 import { autoAssignIfMissing } from './server/routing-policy.js'
+import * as reviewPolicy from './server/review-policy.js'
 
 type SessionEntry = {
   sessionId?: string
@@ -133,6 +135,7 @@ const AGENT_LOGS_API_PATH = '/api/openclaw/agents'
 const AGENT_LOG_LIMIT = 50
 
 const DISPATCHER_API_PATH = '/api/mission-control/dispatcher'
+const REVIEWS_API_PATH = '/api/mission-control/reviews'
 
 function readJsonFile<T>(filePath: string, fallback: T): T {
   try {
@@ -965,6 +968,91 @@ function missionControlApiPlugin() {
     }
   }
 
+  const handleReviews = async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      const url = new URL(req.url ?? '', 'http://mission-control.local')
+
+      if (req.method === 'GET') {
+        // GET /api/mission-control/reviews?taskId=xxx — list reviews
+        const taskId = url.searchParams.get('taskId') ?? undefined
+        const reviews = db.listReviews(taskId)
+        sendJson(res, 200, { reviews })
+        return
+      }
+
+      if (req.method === 'POST') {
+        // POST /api/mission-control/reviews — trigger a review
+        const body = await readBody(req)
+        const input = body ? (JSON.parse(body) as reviewPolicy.ReviewInput) : null
+        if (!input) { sendJson(res, 400, { error: 'Request body is required.' }); return }
+        if (!input.author) { sendJson(res, 400, { error: 'author is required.' }); return }
+        if (!input.title) { sendJson(res, 400, { error: 'title is required.' }); return }
+
+        // Run the review engine
+        const result = reviewPolicy.performReview(input)
+        const reviewId = crypto.randomUUID()
+
+        // Persist the review
+        const record = db.createReview({
+          id: reviewId,
+          taskId: input.taskId ?? null,
+          author: result.author,
+          reviewer: result.reviewer,
+          riskLevel: result.risk.level,
+          riskScore: result.risk.score,
+          riskSignals: result.risk.signals,
+          riskReason: result.risk.reason,
+          outcome: result.outcome,
+          mergeRecommendation: result.mergeRecommendation,
+          autoMergeEligible: result.autoMergeEligible,
+          checklist: result.checklist,
+          summary: result.summary,
+          filesChanged: input.filesChanged ?? [],
+          title: input.title,
+          checksPassed: input.checksPassed ?? false,
+          branchClean: input.branchClean ?? false,
+        })
+
+        // If linked to a task and outcome is approve with auto-merge, transition task
+        if (input.taskId && result.autoMergeEligible) {
+          const task = db.getTask(input.taskId)
+          if (task && task.status === 'in_review') {
+            db.patchTask(input.taskId, { status: 'done', resultSummary: `Auto-merged: ${result.summary}` })
+          }
+        }
+
+        // If linked to a task and changes_requested, move back to doing
+        if (input.taskId && result.outcome === 'changes_requested') {
+          const task = db.getTask(input.taskId)
+          if (task && task.status === 'in_review') {
+            db.patchTask(input.taskId, { status: 'doing' })
+          }
+        }
+
+        sendJson(res, 201, {
+          review: record,
+          comment: reviewPolicy.formatReviewComment(result),
+        })
+        return
+      }
+
+      sendJson(res, 405, { error: 'Method not allowed.' })
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'Review request failed.' })
+    }
+  }
+
+  const handleReviewById = (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? '', 'http://mission-control.local')
+    const reviewId = decodeURIComponent(url.pathname.slice(`${REVIEWS_API_PATH}/`.length))
+
+    if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed.' }); return }
+
+    const review = db.getReview(reviewId)
+    if (!review) { sendJson(res, 404, { error: 'Review not found.' }); return }
+    sendJson(res, 200, { review })
+  }
+
   const handleDispatcher = async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method === 'GET') {
       const status = dispatcher.getStatus()
@@ -1031,6 +1119,16 @@ function missionControlApiPlugin() {
 
       if (pathname === DISPATCHER_API_PATH) {
         void handleDispatcher(req, res)
+        return
+      }
+
+      if (pathname === REVIEWS_API_PATH) {
+        void handleReviews(req, res)
+        return
+      }
+
+      if (pathname.startsWith(`${REVIEWS_API_PATH}/`)) {
+        handleReviewById(req, res)
         return
       }
 
