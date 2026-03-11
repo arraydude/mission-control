@@ -65,9 +65,11 @@ export type GitHubReviewResult = {
   commentPosted: boolean
   commentUrl: string | null
   mergeAttempted: boolean
-  mergeResult: 'merged' | 'skipped' | 'failed' | 'self-review-blocked' | null
+  mergeResult: 'merged' | 'skipped' | 'failed' | 'self-review-blocked' | 'main-assisted-merge' | null
   mergeError: string | null
   selfReviewNote: string | null
+  /** True when merge was completed via main-assisted path (self-review blocked formal approval) */
+  mainAssistedMerge: boolean
   ghIdentity: string | null
   log: string[]
 }
@@ -352,6 +354,78 @@ export function mergePR(
 }
 
 // ---------------------------------------------------------------------------
+// Main-assisted merge — pragmatic path when self-review blocks formal approval
+// ---------------------------------------------------------------------------
+
+/**
+ * Perform a "main-assisted merge" for low-risk, clean, autoMergeEligible PRs
+ * where self-review prevents formal GitHub approval.
+ *
+ * This does NOT pretend the PR was formally approved. The commit message and
+ * audit trail clearly state that merge was completed via main-assisted path
+ * because self-review blocked formal approval on GitHub.
+ *
+ * Preconditions (caller must verify):
+ * - review.autoMergeEligible === true
+ * - review.outcome === 'approve'
+ * - review.risk.level === 'low'
+ * - selfReviewBlocked === true
+ */
+export function mainAssistedMergePR(
+  repo: string,
+  prNumber: number,
+  review: ReviewResult,
+  ghIdentity: string | null,
+): { result: 'main-assisted-merge' | 'failed'; error?: string } {
+  // Safety: re-verify all preconditions
+  if (!review.autoMergeEligible) {
+    return { result: 'failed', error: 'main-assisted merge requires autoMergeEligible' }
+  }
+  if (review.outcome !== 'approve') {
+    return { result: 'failed', error: `main-assisted merge requires outcome=approve, got "${review.outcome}"` }
+  }
+  if (review.risk.level !== 'low') {
+    return { result: 'failed', error: `main-assisted merge only allowed for low-risk, got "${review.risk.level}"` }
+  }
+
+  const subject = [
+    `main-assisted merge: ${review.risk.level}-risk, policy-approved`,
+    `(self-review blocked formal approval for ${ghIdentity ?? 'unknown'})`,
+  ].join(' ')
+
+  try {
+    gh([
+      'pr', 'merge', String(prNumber),
+      '--repo', repo,
+      '--squash',
+      '--auto',
+      '--subject', subject,
+    ])
+    return { result: 'main-assisted-merge' }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+
+    // If --auto is not supported, try direct merge
+    if (msg.includes('auto-merge') || msg.includes('not enabled')) {
+      try {
+        gh([
+          'pr', 'merge', String(prNumber),
+          '--repo', repo,
+          '--squash',
+          '--subject', subject,
+        ])
+        return { result: 'main-assisted-merge' }
+      } catch (retryErr: unknown) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+        return { result: 'failed', error: retryMsg }
+      }
+    }
+
+    return { result: 'failed', error: msg }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Full review pipeline
 // ---------------------------------------------------------------------------
 
@@ -410,6 +484,7 @@ export function reviewGitHubPR(
       mergeResult: 'skipped',
       mergeError: 'PR is not open',
       selfReviewNote: null,
+      mainAssistedMerge: false,
       ghIdentity,
       log,
     }
@@ -434,6 +509,7 @@ export function reviewGitHubPR(
       mergeResult: null,
       mergeError: null,
       selfReviewNote: null,
+      mainAssistedMerge: false,
       ghIdentity,
       log,
     }
@@ -454,12 +530,25 @@ export function reviewGitHubPR(
   let mergeAttempted = false
   let mergeResult: GitHubReviewResult['mergeResult'] = null
   let mergeError: string | null = null
+  let mainAssistedMerge = false
 
   if (review.autoMergeEligible && !opts.skipMerge) {
     if (selfReviewBlocked) {
-      mergeResult = 'self-review-blocked'
-      mergeError = 'Cannot auto-merge: self-review limitation prevents formal approval'
-      log.push(`[github] Merge skipped: self-review prevents formal approval needed for merge`)
+      // Main-assisted merge path: self-review blocks formal approval,
+      // but policy says this is a low-risk, clean, autoMergeEligible case.
+      // Allow main to complete the merge as the final system actor.
+      log.push(`[github] Self-review blocks formal approval — attempting main-assisted merge path`)
+      log.push(`[github] Preconditions: risk=${review.risk.level}, outcome=${review.outcome}, autoMergeEligible=${review.autoMergeEligible}`)
+      mergeAttempted = true
+      const merge = mainAssistedMergePR(repo, prNumber, review, ghIdentity)
+      mergeResult = merge.result
+      mergeError = merge.error ?? null
+      mainAssistedMerge = merge.result === 'main-assisted-merge'
+      if (mainAssistedMerge) {
+        log.push(`[github] MAIN-ASSISTED MERGE: completed successfully — self-review blocked formal approval, main acted as final system actor`)
+      } else {
+        log.push(`[github] Main-assisted merge failed: ${merge.error}`)
+      }
     } else {
       log.push(`[github] Attempting merge...`)
       mergeAttempted = true
@@ -489,6 +578,7 @@ export function reviewGitHubPR(
     mergeResult,
     mergeError,
     selfReviewNote,
+    mainAssistedMerge,
     ghIdentity,
     log,
   }

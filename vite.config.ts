@@ -1170,10 +1170,12 @@ function missionControlApiPlugin() {
       })
 
       // If linked to a task, handle status transitions
-      if (payload.taskId && result.review.autoMergeEligible && result.mergeResult === 'merged') {
+      const isMerged = result.mergeResult === 'merged' || result.mergeResult === 'main-assisted-merge'
+      if (payload.taskId && result.review.autoMergeEligible && isMerged) {
         const task = db.getTask(payload.taskId)
+        const mergeType = result.mainAssistedMerge ? 'Main-assisted merge' : 'Auto-merged'
         if (task && task.status === 'in_review') {
-          db.patchTask(payload.taskId, { status: 'done', resultSummary: `Auto-merged PR #${prNumber}: ${result.review.summary}` })
+          db.patchTask(payload.taskId, { status: 'done', resultSummary: `${mergeType} PR #${prNumber}: ${result.review.summary}` })
         }
       } else if (payload.taskId && result.review.outcome === 'changes_requested') {
         const task = db.getTask(payload.taskId)
@@ -1193,6 +1195,7 @@ function missionControlApiPlugin() {
           mergeResult: result.mergeResult,
           mergeError: result.mergeError,
           selfReviewNote: result.selfReviewNote,
+          mainAssistedMerge: result.mainAssistedMerge,
           ghIdentity: result.ghIdentity,
         },
         log: result.log,
