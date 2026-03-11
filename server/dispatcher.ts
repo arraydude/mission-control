@@ -14,7 +14,7 @@ import * as db from './db.js'
 // Configuration
 // ---------------------------------------------------------------------------
 
-const KNOWN_AGENTS = new Set(['main', 'mida'])
+const KNOWN_AGENTS = new Set(['main', 'mida', 'claude-code'])
 const MAX_RETRY_BACKOFF_MS = 5 * 60 * 1000 // 5 min backoff after errors
 const LOCK_STALE_MS = 60_000 // 60s stale lock threshold
 

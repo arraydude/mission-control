@@ -8,6 +8,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import * as db from './server/db.js'
 import * as dispatcher from './server/dispatcher.js'
+import { autoAssignIfMissing } from './server/routing-policy.js'
 
 type SessionEntry = {
   sessionId?: string
@@ -835,9 +836,16 @@ function missionControlApiPlugin() {
       if (req.method === 'POST') {
         const body = await readBody(req)
         const input = body ? (JSON.parse(body) as Partial<MissionTask>) : {}
+
+        // Auto-route if no explicit assignedAgent
+        const routing = autoAssignIfMissing(input.assignedAgent, input.title ?? '', input.description ?? '')
+        if (routing) {
+          input.assignedAgent = routing.agent
+        }
+
         const task = db.createTask(input)
         dispatcher.onTaskCreated(task)
-        sendJson(res, 201, { task })
+        sendJson(res, 201, { task, routing: routing ? { agent: routing.agent, reason: routing.routingReason, auto: true } : null })
         return
       }
 
@@ -869,9 +877,24 @@ function missionControlApiPlugin() {
 
       const body = await readBody(req)
       const patch = body ? (JSON.parse(body) as MissionTaskPatch) : {}
+
+      // Auto-route on patch if assignedAgent is still missing and content changed materially
+      let routing: { agent: string; routingReason: string; auto: boolean } | null = null
+      const effectiveAgent = patch.assignedAgent !== undefined ? patch.assignedAgent : previousTask.assignedAgent
+      const contentChanged = typeof patch.title === 'string' || typeof patch.description === 'string'
+      if (!effectiveAgent && contentChanged) {
+        const title = typeof patch.title === 'string' ? patch.title : previousTask.title
+        const description = typeof patch.description === 'string' ? patch.description : previousTask.description
+        const result = autoAssignIfMissing(null, title, description)
+        if (result) {
+          patch.assignedAgent = result.agent
+          routing = { agent: result.agent, routingReason: result.routingReason, auto: true }
+        }
+      }
+
       const task = db.patchTask(taskId, patch)
       dispatcher.onTaskPatched(taskId, patch, previousTask, task)
-      sendJson(res, 200, { task })
+      sendJson(res, 200, { task, routing })
     } catch (error) {
       sendJson(res, 400, { error: error instanceof Error ? error.message : 'Task update failed.' })
     }
