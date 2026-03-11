@@ -22,6 +22,11 @@ import {
   UserRound,
   Wrench,
   Zap,
+  Power,
+  Clock,
+  Radio,
+  Pause,
+  Play,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -221,6 +226,42 @@ type TaskEditFormState = {
   priority: MissionTaskPriority
   status: MissionTaskStatus
   assignedAgent: string
+}
+
+type DispatchOutcome = {
+  taskId: string
+  taskTitle: string
+  agentId: string
+  outcome: 'dispatched' | 'error' | 'blocked' | 'busy' | 'skipped'
+  message?: string
+  at: number
+}
+
+type DispatcherAgentOccupancy = {
+  agentId: string
+  busy: boolean
+  activeTaskId: string | null
+  activeTaskTitle: string | null
+}
+
+type DispatcherQueueItem = {
+  taskId: string
+  title: string
+  assignedAgent: string
+  priority: string
+  waitReason: string
+  dispatchAttempts: number
+  lastDispatchError: string | null
+  readySince: number | null
+}
+
+type DispatcherStatus = {
+  enabled: boolean
+  lastEvalAt: number | null
+  lastOutcomes: DispatchOutcome[]
+  knownAgents: string[]
+  agentOccupancy: DispatcherAgentOccupancy[]
+  queue: DispatcherQueueItem[]
 }
 
 type ViewId = 'dashboard' | 'tasks' | 'agents' | 'sessions' | 'system'
@@ -975,6 +1016,8 @@ export default function App() {
   const [submittingTask, setSubmittingTask] = useState(false)
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null)
   const [form, setForm] = useState<TaskFormState>(emptyTaskForm)
+  const [dispatcherStatus, setDispatcherStatus] = useState<DispatcherStatus | null>(null)
+  const [togglingDispatcher, setTogglingDispatcher] = useState(false)
   const [activeView, setActiveViewState] = useState<ViewId>(readViewFromURL)
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -1036,9 +1079,20 @@ export default function App() {
       }
     }
 
+    async function loadDispatcher() {
+      try {
+        const response = await fetch('/api/mission-control/dispatcher', { cache: 'no-store' })
+        if (response.ok) {
+          const data = (await response.json()) as DispatcherStatus
+          if (!cancelled) setDispatcherStatus(data)
+        }
+      } catch { /* non-critical */ }
+    }
+
     loadState()
     loadTasks()
-    const interval = window.setInterval(() => { loadState(); loadTasks() }, 15000)
+    loadDispatcher()
+    const interval = window.setInterval(() => { loadState(); loadTasks(); loadDispatcher() }, 15000)
     return () => { cancelled = true; window.clearInterval(interval) }
   }, [])
 
@@ -1162,12 +1216,14 @@ export default function App() {
   const handleManualRefresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      const [stateRes, tasksRes] = await Promise.all([
+      const [stateRes, tasksRes, dispRes] = await Promise.all([
         fetch('/api/openclaw/state', { cache: 'no-store' }),
         fetch('/api/mission-control/tasks', { cache: 'no-store' }),
+        fetch('/api/mission-control/dispatcher', { cache: 'no-store' }),
       ])
       if (stateRes.ok) { const p = (await stateRes.json()) as MissionControlState; setState(p); setError(null) }
       if (tasksRes.ok) { const p = (await tasksRes.json()) as { tasks: MissionTask[] }; setTasks(p.tasks); setTaskError(null) }
+      if (dispRes.ok) { setDispatcherStatus((await dispRes.json()) as DispatcherStatus) }
       toast.success('Data refreshed')
     } catch {
       toast.error('Refresh failed')
@@ -1175,6 +1231,32 @@ export default function App() {
       setRefreshing(false)
     }
   }, [])
+
+  const refreshDispatcher = useCallback(async () => {
+    try {
+      const res = await fetch('/api/mission-control/dispatcher', { cache: 'no-store' })
+      if (res.ok) setDispatcherStatus((await res.json()) as DispatcherStatus)
+    } catch { /* ignore */ }
+  }, [])
+
+  const toggleDispatcher = useCallback(async () => {
+    if (!dispatcherStatus) return
+    setTogglingDispatcher(true)
+    try {
+      const action = dispatcherStatus.enabled ? 'disable' : 'enable'
+      const res = await fetch(`/api/mission-control/dispatcher?action=${action}`, { method: 'POST' })
+      if (res.ok) {
+        await refreshDispatcher()
+        toast.success(`Dispatcher ${action}d`)
+      } else {
+        toast.error(`Failed to ${action} dispatcher`)
+      }
+    } catch {
+      toast.error('Failed to toggle dispatcher')
+    } finally {
+      setTogglingDispatcher(false)
+    }
+  }, [dispatcherStatus, refreshDispatcher])
 
   return (
     <SidebarProvider>
@@ -1445,6 +1527,126 @@ export default function App() {
                             </div>
                           ))}
                         </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* ── Dispatcher Status ── */}
+                  {dispatcherStatus && (
+                    <Card className={cardClass}>
+                      <CardHeader>
+                        <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ textWrap: 'balance' }}>
+                          <Radio className="h-4 w-4 text-violet-300" aria-hidden="true" /> Dispatcher
+                          <Pill toneKey={dispatcherStatus.enabled ? 'active' : 'inactive'}>
+                            {dispatcherStatus.enabled ? 'Enabled' : 'Disabled'}
+                          </Pill>
+                        </CardTitle>
+                        <CardAction>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={toggleDispatcher}
+                            disabled={togglingDispatcher}
+                            className={`rounded-full text-xs ${dispatcherStatus.enabled ? 'border-zinc-500/30 bg-zinc-500/10 text-zinc-300 hover:bg-zinc-500/20 hover:text-zinc-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200'}`}
+                          >
+                            {dispatcherStatus.enabled ? <><Pause className="h-3 w-3" /> Disable</> : <><Play className="h-3 w-3" /> Enable</>}
+                          </Button>
+                        </CardAction>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid gap-4 md:grid-cols-3">
+                          {/* Agent Occupancy */}
+                          <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4">
+                            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-100">
+                              <Bot className="h-3.5 w-3.5 text-cyan-300" aria-hidden="true" /> Agent Occupancy
+                            </div>
+                            <div className="space-y-2">
+                              {dispatcherStatus.agentOccupancy.length === 0 ? (
+                                <p className="text-xs text-zinc-500">No known agents</p>
+                              ) : (
+                                dispatcherStatus.agentOccupancy.map((a) => (
+                                  <div key={a.agentId} className="flex items-center justify-between rounded-xl border border-white/8 bg-[#111214] p-2.5">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`h-1.5 w-1.5 rounded-full ${a.busy ? 'bg-orange-400' : 'bg-emerald-400'}`} />
+                                        <span className="text-xs font-medium text-zinc-200">{a.agentId}</span>
+                                      </div>
+                                      {a.busy && a.activeTaskTitle && (
+                                        <p className="mt-1 ml-3.5 text-[11px] text-zinc-500 truncate">{a.activeTaskTitle}</p>
+                                      )}
+                                    </div>
+                                    <Pill toneKey={a.busy ? 'warning' : 'active'}>{a.busy ? 'Busy' : 'Free'}</Pill>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Queue */}
+                          <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4">
+                            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-100">
+                              <Clock className="h-3.5 w-3.5 text-orange-300" aria-hidden="true" /> Queue
+                              {dispatcherStatus.queue.length > 0 && (
+                                <Badge variant="outline" className="ml-1 rounded-full border-orange-500/20 bg-orange-500/10 text-orange-300 text-[10px] font-medium px-2">
+                                  {dispatcherStatus.queue.length}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              {dispatcherStatus.queue.length === 0 ? (
+                                <p className="text-xs text-zinc-500">Queue is empty</p>
+                              ) : (
+                                dispatcherStatus.queue.slice(0, 4).map((q) => (
+                                  <div key={q.taskId} className="rounded-xl border border-white/8 bg-[#111214] p-2.5">
+                                    <div className="text-xs font-medium text-zinc-200 truncate">{q.title}</div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                                      <span className="text-zinc-500">{q.assignedAgent}</span>
+                                      <span className="text-zinc-600">&middot;</span>
+                                      <span className="text-zinc-400">{q.waitReason}</span>
+                                    </div>
+                                    {q.lastDispatchError && (
+                                      <p className="mt-1 text-[10px] text-red-400 truncate">{q.lastDispatchError}</p>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Recent Outcomes */}
+                          <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4">
+                            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-100">
+                              <Zap className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" /> Recent Outcomes
+                            </div>
+                            <div className="space-y-2">
+                              {dispatcherStatus.lastOutcomes.length === 0 ? (
+                                <p className="text-xs text-zinc-500">No recent dispatch outcomes</p>
+                              ) : (
+                                dispatcherStatus.lastOutcomes.slice(0, 5).map((o, i) => {
+                                  const outcomeTone: ToneKey = o.outcome === 'dispatched' ? 'active' : o.outcome === 'error' ? 'critical' : o.outcome === 'blocked' ? 'warning' : 'inactive'
+                                  return (
+                                    <div key={`${o.taskId}-${i}`} className="rounded-xl border border-white/8 bg-[#111214] p-2.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-medium text-zinc-200 truncate flex-1">{o.taskTitle || o.taskId}</span>
+                                        <Pill toneKey={outcomeTone}>{o.outcome}</Pill>
+                                      </div>
+                                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-500">
+                                        <span>{o.agentId}</span>
+                                        {o.at && <><span>&middot;</span><span>{formatRelativeTime(o.at)}</span></>}
+                                      </div>
+                                      {o.message && o.outcome !== 'dispatched' && (
+                                        <p className="mt-1 text-[10px] text-zinc-400 truncate">{o.message}</p>
+                                      )}
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {dispatcherStatus.lastEvalAt && (
+                          <p className="mt-3 text-[11px] text-zinc-600">Last eval: {formatRelativeTime(dispatcherStatus.lastEvalAt)}</p>
+                        )}
                       </CardContent>
                     </Card>
                   )}
@@ -1759,6 +1961,132 @@ export default function App() {
                 {state && (
                   <section className="grid gap-5 xl:grid-cols-2">
                     <div className="flex flex-col gap-5">
+                      {/* ── Dispatcher Detail ── */}
+                      <Card className={cardClass}>
+                        <CardHeader>
+                          <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ textWrap: 'balance' }}>
+                            <Radio className="h-4 w-4 text-violet-300" aria-hidden="true" /> Dispatcher
+                          </CardTitle>
+                          <CardAction>
+                            {dispatcherStatus && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={toggleDispatcher}
+                                disabled={togglingDispatcher}
+                                className={`rounded-full text-xs ${dispatcherStatus.enabled ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200'}`}
+                              >
+                                <Power className="h-3 w-3" />
+                                {dispatcherStatus.enabled ? 'Disable' : 'Enable'}
+                              </Button>
+                            )}
+                          </CardAction>
+                        </CardHeader>
+                        <CardContent>
+                          {dispatcherStatus ? (
+                            <div className="space-y-4">
+                              <div className="grid gap-2 text-sm text-zinc-300">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-zinc-500">Status</span>
+                                  <Pill toneKey={dispatcherStatus.enabled ? 'active' : 'inactive'}>{dispatcherStatus.enabled ? 'Enabled' : 'Disabled'}</Pill>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-zinc-500">Known Agents</span>
+                                  <span className="font-display text-xs text-zinc-200">{dispatcherStatus.knownAgents.join(', ')}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-zinc-500">Last Eval</span>
+                                  <span className="font-display text-xs text-zinc-200">{dispatcherStatus.lastEvalAt ? formatRelativeTime(dispatcherStatus.lastEvalAt) : 'never'}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-zinc-500">Queue Size</span>
+                                  <span className="font-display text-xs text-zinc-200" style={{ fontVariantNumeric: 'tabular-nums' }}>{dispatcherStatus.queue.length}</span>
+                                </div>
+                              </div>
+                              <Separator className="bg-white/8" />
+                              <div>
+                                <div className="mb-2 text-sm font-medium text-zinc-100">Agent Occupancy</div>
+                                <ItemGroup>
+                                  {dispatcherStatus.agentOccupancy.map((a) => (
+                                    <Item key={a.agentId} variant="outline" size="sm" className="border-white/7 bg-white/[0.02]">
+                                      <ItemContent>
+                                        <ItemTitle className="text-zinc-100 flex items-center gap-2">
+                                          <span className={`h-1.5 w-1.5 rounded-full ${a.busy ? 'bg-orange-400' : 'bg-emerald-400'}`} />
+                                          {a.agentId}
+                                        </ItemTitle>
+                                        <ItemDescription className="text-zinc-400">
+                                          {a.busy ? (a.activeTaskTitle ?? 'Working on a task') : 'Available for dispatch'}
+                                        </ItemDescription>
+                                      </ItemContent>
+                                      <ItemActions>
+                                        <Pill toneKey={a.busy ? 'warning' : 'active'}>{a.busy ? 'Busy' : 'Free'}</Pill>
+                                      </ItemActions>
+                                    </Item>
+                                  ))}
+                                </ItemGroup>
+                              </div>
+                              {dispatcherStatus.queue.length > 0 && (
+                                <>
+                                  <Separator className="bg-white/8" />
+                                  <div>
+                                    <div className="mb-2 text-sm font-medium text-zinc-100">Queued Tasks</div>
+                                    <ItemGroup>
+                                      {dispatcherStatus.queue.map((q) => (
+                                        <Item key={q.taskId} variant="outline" size="sm" className="border-white/7 bg-white/[0.02] flex-col items-stretch">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="text-sm text-zinc-100 truncate">{q.title}</span>
+                                            <TaskPill className={PRIORITY_TONES[q.priority as MissionTaskPriority] ?? PRIORITY_TONES.medium}>{q.priority}</TaskPill>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-1">
+                                            <span>{q.assignedAgent}</span>
+                                            <span className="text-zinc-600">&middot;</span>
+                                            <span>{q.waitReason}</span>
+                                            {q.dispatchAttempts > 0 && (
+                                              <><span className="text-zinc-600">&middot;</span><span>{q.dispatchAttempts} attempt{q.dispatchAttempts !== 1 ? 's' : ''}</span></>
+                                            )}
+                                          </div>
+                                          {q.lastDispatchError && (
+                                            <p className="mt-1 text-[11px] text-red-400">{q.lastDispatchError}</p>
+                                          )}
+                                        </Item>
+                                      ))}
+                                    </ItemGroup>
+                                  </div>
+                                </>
+                              )}
+                              {dispatcherStatus.lastOutcomes.length > 0 && (
+                                <>
+                                  <Separator className="bg-white/8" />
+                                  <div>
+                                    <div className="mb-2 text-sm font-medium text-zinc-100">Last Dispatch Cycle</div>
+                                    <ItemGroup>
+                                      {dispatcherStatus.lastOutcomes.map((o, i) => {
+                                        const outcomeTone: ToneKey = o.outcome === 'dispatched' ? 'active' : o.outcome === 'error' ? 'critical' : o.outcome === 'blocked' ? 'warning' : 'inactive'
+                                        return (
+                                          <Item key={`${o.taskId}-${i}`} variant="outline" size="sm" className="border-white/7 bg-white/[0.02]">
+                                            <ItemContent>
+                                              <ItemTitle className="text-zinc-100">{o.taskTitle || o.taskId}</ItemTitle>
+                                              <ItemDescription className="text-zinc-400">
+                                                {o.agentId}{o.message ? ` \u2014 ${o.message}` : ''}
+                                              </ItemDescription>
+                                            </ItemContent>
+                                            <ItemActions>
+                                              <Pill toneKey={outcomeTone}>{o.outcome}</Pill>
+                                            </ItemActions>
+                                          </Item>
+                                        )
+                                      })}
+                                    </ItemGroup>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-zinc-500">Dispatcher data unavailable.</p>
+                          )}
+                        </CardContent>
+                      </Card>
+
                       <Card className={cardClass}>
                         <CardHeader><CardTitle className="text-base font-semibold" style={{ textWrap: 'balance' }}>Gateway &amp; Channels</CardTitle></CardHeader>
                         <CardContent>
