@@ -75,6 +75,7 @@ const TASK_STATUSES = new Set<MissionTaskStatus>(['inbox', 'ready', 'doing', 'bl
 const TASK_PRIORITIES = new Set<MissionTaskPriority>(['low', 'medium', 'high'])
 const COMMENT_TYPES = new Set<TaskCommentType>(['progress', 'blocker', 'decision', 'result', 'system'])
 const MAX_DISPATCH_ATTEMPTS = 5
+const IN_FLIGHT_STALE_MS = 5 * 60 * 1000 // 5 min — in-flight dispatches older than this are considered stale
 
 const DB_DIR = path.join(process.cwd(), 'data')
 const DB_PATH = path.join(DB_DIR, 'mission-control.db')
@@ -752,14 +753,20 @@ export function getReadyTasksForDispatch(cooldownMs: number): MissionTask[] {
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
 /**
- * Check if an agent is currently occupied (has a task in 'doing' status).
+ * Check if an agent is currently occupied.
+ * An agent is occupied if it has a task in 'doing' status OR has an in-flight
+ * dispatch (task dispatched but not yet claimed by the agent).
  */
 export function isAgentOccupied(agentId: string): boolean {
   const db = getDb()
+  const now = Date.now()
   const row = db.prepare(`
     SELECT COUNT(*) as c FROM tasks
-    WHERE assignedAgent = ? AND status = 'doing'
-  `).get(agentId) as { c: number }
+    WHERE assignedAgent = ? AND (
+      status = 'doing'
+      OR (status = 'ready' AND lastDispatchedVersion >= actionableVersion AND lastDispatchedAt > ?)
+    )
+  `).get(agentId, now - IN_FLIGHT_STALE_MS) as { c: number }
   return row.c > 0
 }
 
@@ -836,7 +843,7 @@ export function releaseDispatchLock(taskId: string): void {
 }
 
 /**
- * Record a successful dispatch (v2): set lastDispatchedVersion, activeRunId, claim, status.
+ * Record a dispatch outcome (v2): persist dispatch metadata without changing task status.
  */
 export function recordDispatchV2(
   taskId: string,
@@ -852,15 +859,17 @@ export function recordDispatchV2(
     if (!task) return
 
     if (outcome === 'dispatched') {
+      // Record dispatch metadata only — the agent is responsible for
+      // transitioning ready → doing when it actually claims the task.
       db.prepare(`
         UPDATE tasks
-        SET status = 'doing', claimedBy = ?, claimedAt = ?, updatedAt = ?,
+        SET updatedAt = ?,
             lastDispatchedAt = ?, dispatchAttempts = dispatchAttempts + 1,
             lastDispatchError = NULL, dispatchLock = NULL,
             lastDispatchedVersion = actionableVersion,
             activeRunId = ?
         WHERE id = ?
-      `).run(agentId, now, now, now, task.actionableVersion, opts?.runId ?? null, taskId)
+      `).run(now, now, opts?.runId ?? null, taskId)
 
       db.prepare('INSERT INTO task_comments (id, taskId, author, type, text, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
         randomUUID(), taskId, 'system', 'system', `Task dispatched to ${agentId} (v${task.actionableVersion})`, now
@@ -897,15 +906,30 @@ export function recordDispatchV2(
  */
 export function getAgentOccupancy(knownAgents: Set<string>): Array<{ agentId: string; busy: boolean; activeTaskId: string | null; activeTaskTitle: string | null }> {
   const db = getDb()
+  const now = Date.now()
   return [...knownAgents].map((agentId) => {
+    // Check for tasks actively being worked
     const active = db.prepare(`
       SELECT id, title FROM tasks WHERE assignedAgent = ? AND status = 'doing' LIMIT 1
     `).get(agentId) as { id: string; title: string } | undefined
+
+    if (active) {
+      return { agentId, busy: true, activeTaskId: active.id, activeTaskTitle: active.title }
+    }
+
+    // Check for in-flight dispatches (dispatched but not yet claimed)
+    const inFlight = db.prepare(`
+      SELECT id, title FROM tasks
+      WHERE assignedAgent = ? AND status = 'ready'
+        AND lastDispatchedVersion >= actionableVersion AND lastDispatchedAt > ?
+      LIMIT 1
+    `).get(agentId, now - IN_FLIGHT_STALE_MS) as { id: string; title: string } | undefined
+
     return {
       agentId,
-      busy: !!active,
-      activeTaskId: active?.id ?? null,
-      activeTaskTitle: active?.title ?? null,
+      busy: !!inFlight,
+      activeTaskId: inFlight?.id ?? null,
+      activeTaskTitle: inFlight?.title ?? null,
     }
   })
 }
@@ -931,7 +955,7 @@ export function getDispatchQueueStatus(knownAgents: Set<string>): Array<{
     if (!knownAgents.has(row.assignedAgent!)) {
       waitReason = `unknown agent: ${row.assignedAgent}`
     } else if (row.actionableVersion <= row.lastDispatchedVersion) {
-      waitReason = 'already dispatched for current version'
+      waitReason = 'dispatched — awaiting agent claim'
     } else if (row.dispatchLock && row.dispatchLock > Date.now() - 60000) {
       waitReason = 'dispatch in progress (locked)'
     } else if (row.activeRunId) {

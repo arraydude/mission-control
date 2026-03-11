@@ -63,8 +63,17 @@ function notifyBlocker(message) {
   }, () => {})
 }
 
+const IN_FLIGHT_STALE_MS = 5 * 60 * 1000
+
 function isAgentOccupied(db, agentId) {
-  const row = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE assignedAgent = ? AND status = 'doing'`).get(agentId)
+  const now = Date.now()
+  const row = db.prepare(`
+    SELECT COUNT(*) as c FROM tasks
+    WHERE assignedAgent = ? AND (
+      status = 'doing'
+      OR (status = 'ready' AND lastDispatchedVersion >= actionableVersion AND lastDispatchedAt > ?)
+    )
+  `).get(agentId, now - IN_FLIGHT_STALE_MS)
   return row.c > 0
 }
 
@@ -154,11 +163,11 @@ async function run() {
 
     if (result.ok) {
       db.prepare(`
-        UPDATE tasks SET status = 'doing', claimedBy = ?, claimedAt = ?, updatedAt = ?,
+        UPDATE tasks SET updatedAt = ?,
           lastDispatchedAt = ?, dispatchAttempts = dispatchAttempts + 1, lastDispatchError = NULL,
           dispatchLock = NULL, lastDispatchedVersion = actionableVersion, activeRunId = NULL
         WHERE id = ?
-      `).run(agent, now, now, now, task.id)
+      `).run(now, now, task.id)
       db.prepare('INSERT INTO task_comments (id, taskId, author, type, text, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
         .run(randomUUID(), task.id, 'system', 'system', `Task dispatched to ${agent} (v${task.actionableVersion})`, now)
       db.prepare('INSERT INTO task_dispatch_events (id, taskId, agentId, eventType, message, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
