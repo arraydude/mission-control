@@ -22,6 +22,11 @@ export type ClaimMeta = {
   claimedAt: number | null
 }
 
+export type RoutingMeta = {
+  autoRouted: boolean
+  routingReason: string | null
+}
+
 export type MissionTask = {
   id: string
   title: string
@@ -35,6 +40,7 @@ export type MissionTask = {
   comments: TaskComment[]
   claim: ClaimMeta
   dispatch?: DispatchMeta
+  routing: RoutingMeta
 }
 
 export type TaskComment = {
@@ -156,6 +162,9 @@ export function getDb(): Database.Database {
     'ALTER TABLE tasks ADD COLUMN dispatchLock INTEGER',
     'ALTER TABLE tasks ADD COLUMN activeRunId TEXT',
     'ALTER TABLE tasks ADD COLUMN readySince INTEGER',
+    // Routing UI columns
+    'ALTER TABLE tasks ADD COLUMN autoRouted INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE tasks ADD COLUMN routingReason TEXT',
   ]) {
     try { _db.exec(col) } catch { /* column already exists */ }
   }
@@ -297,6 +306,8 @@ type TaskRow = {
   dispatchLock: number | null
   activeRunId: string | null
   readySince: number | null
+  autoRouted: number
+  routingReason: string | null
 }
 
 function rowToTask(row: TaskRow, comments: TaskComment[]): MissionTask {
@@ -314,6 +325,10 @@ function rowToTask(row: TaskRow, comments: TaskComment[]): MissionTask {
     claim: {
       claimedBy: row.claimedBy ?? null,
       claimedAt: row.claimedAt ?? null,
+    },
+    routing: {
+      autoRouted: Boolean(row.autoRouted),
+      routingReason: row.routingReason ?? null,
     },
   }
 
@@ -368,7 +383,7 @@ export function getTask(taskId: string): MissionTask | null {
   })))
 }
 
-export function createTask(input: Partial<MissionTask>): MissionTask {
+export function createTask(input: Partial<MissionTask>, routingInfo?: { autoRouted: boolean; routingReason: string }): MissionTask {
   const db = getDb()
   const now = Date.now()
   const title = input.title?.trim()
@@ -380,15 +395,17 @@ export function createTask(input: Partial<MissionTask>): MissionTask {
   const status = TASK_STATUSES.has(input.status as MissionTaskStatus) ? input.status! : 'inbox'
   const assignedAgent = input.assignedAgent?.trim() || null
   const description = input.description?.trim() ?? ''
+  const autoRouted = routingInfo?.autoRouted ? 1 : 0
+  const routingReason = routingInfo?.routingReason ?? null
 
   const isActionable = status === 'ready' && assignedAgent !== null
   const actionableVersion = isActionable ? 1 : 0
   const readySince = status === 'ready' ? now : null
 
   db.prepare(`
-    INSERT INTO tasks (id, title, description, priority, status, assignedAgent, createdAt, updatedAt, actionableVersion, readySince)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, title, description, priority, status, assignedAgent, now, now, actionableVersion, readySince)
+    INSERT INTO tasks (id, title, description, priority, status, assignedAgent, createdAt, updatedAt, actionableVersion, readySince, autoRouted, routingReason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, title, description, priority, status, assignedAgent, now, now, actionableVersion, readySince, autoRouted, routingReason)
 
   return {
     id,
@@ -405,6 +422,10 @@ export function createTask(input: Partial<MissionTask>): MissionTask {
       claimedBy: null,
       claimedAt: null,
     },
+    routing: {
+      autoRouted: Boolean(autoRouted),
+      routingReason,
+    },
     dispatch: {
       lastDispatchedAt: null,
       dispatchAttempts: 0,
@@ -418,7 +439,7 @@ export function createTask(input: Partial<MissionTask>): MissionTask {
   }
 }
 
-export function patchTask(taskId: string, patch: MissionTaskPatch): MissionTask {
+export function patchTask(taskId: string, patch: MissionTaskPatch, routingInfo?: { autoRouted: boolean; routingReason: string }): MissionTask {
   const db = getDb()
   const existing = getTask(taskId)
   if (!existing) throw new Error('Task not found.')
@@ -458,6 +479,13 @@ export function patchTask(taskId: string, patch: MissionTaskPatch): MissionTask 
   if (typeof patch.resultSummary === 'string') {
     updates.push('resultSummary = @resultSummary')
     params.resultSummary = patch.resultSummary.trim() || null
+  }
+
+  if (routingInfo) {
+    updates.push('autoRouted = @autoRouted')
+    params.autoRouted = routingInfo.autoRouted ? 1 : 0
+    updates.push('routingReason = @routingReason')
+    params.routingReason = routingInfo.routingReason
   }
 
   if (updates.length > 0) {

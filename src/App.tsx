@@ -21,6 +21,7 @@ import {
   Send,
   Terminal,
   TriangleAlert,
+  Route,
   UserRound,
   Wrench,
   Zap,
@@ -135,6 +136,10 @@ type MissionTask = {
   claim: {
     claimedBy: string | null
     claimedAt: number | null
+  }
+  routing?: {
+    autoRouted: boolean
+    routingReason: string | null
   }
 }
 
@@ -465,7 +470,11 @@ function TaskCardItem({
               <TaskPill className={PRIORITY_TONES[task.priority]}>{task.priority}</TaskPill>
               <TaskPill className={assignedAgent?.active ? toneBadge.active : toneBadge.inactive}>
                 <span className="inline-flex items-center gap-1">
-                  <UserRound className="h-2.5 w-2.5" aria-hidden="true" />
+                  {task.routing?.autoRouted ? (
+                    <Route className="h-2.5 w-2.5" aria-hidden="true" />
+                  ) : (
+                    <UserRound className="h-2.5 w-2.5" aria-hidden="true" />
+                  )}
                   {task.assignedAgent ?? 'Unassigned'}
                 </span>
               </TaskPill>
@@ -515,8 +524,20 @@ function TaskCardItem({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             <span>Updated {formatRelativeTime(task.updatedAt)}</span>
+            {task.routing?.autoRouted && task.assignedAgent && (
+              <span className="inline-flex items-center gap-1 text-violet-300">
+                <Route className="h-3 w-3" aria-hidden="true" />
+                Auto-routed to <span className="font-medium">{task.assignedAgent}</span>
+              </span>
+            )}
+            {task.assignedAgent && !task.routing?.autoRouted && (
+              <span className="inline-flex items-center gap-1 text-zinc-400">
+                <UserRound className="h-3 w-3" aria-hidden="true" />
+                Manually assigned
+              </span>
+            )}
             {task.claim?.claimedBy && (
               <span className="inline-flex items-center gap-1 text-orange-300">
                 <Lock className="h-3 w-3" aria-hidden="true" />
@@ -525,6 +546,17 @@ function TaskCardItem({
               </span>
             )}
           </div>
+
+          {/* ── Routing reason (compact, only when auto-routed) ── */}
+          {task.routing?.autoRouted && task.routing.routingReason && (
+            <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-violet-400 mb-0.5">
+                <Route className="h-3 w-3" aria-hidden="true" />
+                Routing Decision
+              </div>
+              <p className="text-xs text-violet-200/80 leading-4">{task.routing.routingReason}</p>
+            </div>
+          )}
 
           {/* ── Result summary (prominent for done tasks) ── */}
           {task.resultSummary && (
@@ -598,7 +630,12 @@ function TaskCardItem({
               <div className="grid gap-1">
                 <Label className="text-xs text-zinc-500">Owner</Label>
                 <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-sm text-zinc-200">
-                  {assignedAgent ? <AgentIdentityLabel agent={assignedAgent} /> : 'Unassigned'}
+                  <span className="inline-flex items-center gap-1.5">
+                    {assignedAgent ? <AgentIdentityLabel agent={assignedAgent} /> : 'Unassigned'}
+                    {task.routing?.autoRouted && (
+                      <Badge variant="outline" className="rounded-full text-[9px] px-1.5 py-0 leading-3 text-violet-300 bg-violet-500/10 border-violet-500/20">auto</Badge>
+                    )}
+                  </span>
                 </div>
               </div>
               <div className="grid gap-1">
