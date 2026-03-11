@@ -107,7 +107,7 @@ type ChannelSnapshot = {
   groupPolicy: string
 }
 
-type MissionTaskStatus = 'inbox' | 'ready' | 'doing' | 'blocked' | 'done'
+type MissionTaskStatus = 'inbox' | 'ready' | 'doing' | 'blocked' | 'in_review' | 'done'
 type MissionTaskPriority = 'low' | 'medium' | 'high'
 type TaskCommentType = 'progress' | 'blocker' | 'decision' | 'result' | 'system'
 
@@ -229,6 +229,7 @@ const TASK_STATUSES: Array<{ id: MissionTaskStatus; label: string }> = [
   { id: 'inbox', label: 'Inbox' },
   { id: 'ready', label: 'Ready' },
   { id: 'doing', label: 'Doing' },
+  { id: 'in_review', label: 'In Review' },
   { id: 'blocked', label: 'Blocked' },
   { id: 'done', label: 'Done' },
 ]
@@ -243,6 +244,7 @@ const STATUS_ACCENTS: Record<MissionTaskStatus, string> = {
   inbox: 'border-zinc-500/20',
   ready: 'border-cyan-500/20',
   doing: 'border-orange-500/20',
+  in_review: 'border-violet-500/20',
   blocked: 'border-red-500/20',
   done: 'border-emerald-500/20',
 }
@@ -251,6 +253,7 @@ const STATUS_DOTS: Record<MissionTaskStatus, string> = {
   inbox: 'text-zinc-400',
   ready: 'text-cyan-400',
   doing: 'text-orange-400',
+  in_review: 'text-violet-400',
   blocked: 'text-red-400',
   done: 'text-emerald-400',
 }
@@ -385,6 +388,7 @@ const COLUMN_EMPTY_LABELS: Record<MissionTaskStatus, string> = {
   inbox: 'No new tasks',
   ready: 'Nothing queued',
   doing: 'No work in progress',
+  in_review: 'Nothing in review',
   blocked: 'Nothing blocked',
   done: 'No completed tasks',
 }

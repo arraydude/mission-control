@@ -13,7 +13,7 @@ import Database from 'better-sqlite3'
 // Types (shared with vite.config.ts)
 // ---------------------------------------------------------------------------
 
-export type MissionTaskStatus = 'inbox' | 'ready' | 'doing' | 'blocked' | 'done'
+export type MissionTaskStatus = 'inbox' | 'ready' | 'doing' | 'blocked' | 'in_review' | 'done'
 export type MissionTaskPriority = 'low' | 'medium' | 'high'
 export type TaskCommentType = 'progress' | 'blocker' | 'decision' | 'result' | 'system'
 
@@ -77,7 +77,7 @@ export type MissionTaskPatch = Partial<Pick<MissionTask, 'title' | 'description'
 // Constants
 // ---------------------------------------------------------------------------
 
-const TASK_STATUSES = new Set<MissionTaskStatus>(['inbox', 'ready', 'doing', 'blocked', 'done'])
+const TASK_STATUSES = new Set<MissionTaskStatus>(['inbox', 'ready', 'doing', 'blocked', 'in_review', 'done'])
 const TASK_PRIORITIES = new Set<MissionTaskPriority>(['low', 'medium', 'high'])
 const COMMENT_TYPES = new Set<TaskCommentType>(['progress', 'blocker', 'decision', 'result', 'system'])
 const MAX_DISPATCH_ATTEMPTS = 5
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title           TEXT NOT NULL,
   description     TEXT NOT NULL DEFAULT '',
   priority        TEXT NOT NULL DEFAULT 'medium'  CHECK(priority IN ('low','medium','high')),
-  status          TEXT NOT NULL DEFAULT 'inbox'   CHECK(status IN ('inbox','ready','doing','blocked','done')),
+  status          TEXT NOT NULL DEFAULT 'inbox'   CHECK(status IN ('inbox','ready','doing','blocked','in_review','done')),
   assignedAgent   TEXT,
   claimedBy       TEXT,
   claimedAt       INTEGER,
@@ -130,6 +130,29 @@ CREATE TABLE IF NOT EXISTS task_dispatch_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dispatch_events_taskId ON task_dispatch_events(taskId);
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id              TEXT PRIMARY KEY,
+  taskId          TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  author          TEXT NOT NULL,
+  reviewer        TEXT NOT NULL,
+  riskLevel       TEXT NOT NULL CHECK(riskLevel IN ('low','medium','high')),
+  riskScore       INTEGER NOT NULL DEFAULT 0,
+  riskSignals     TEXT NOT NULL DEFAULT '[]',
+  riskReason      TEXT NOT NULL DEFAULT '',
+  outcome         TEXT NOT NULL CHECK(outcome IN ('approve','changes_requested','escalate_to_human')),
+  mergeRecommendation TEXT NOT NULL CHECK(mergeRecommendation IN ('merge','fix','human-review')),
+  autoMergeEligible INTEGER NOT NULL DEFAULT 0,
+  checklistJson   TEXT NOT NULL DEFAULT '[]',
+  summary         TEXT NOT NULL DEFAULT '',
+  filesChanged    TEXT NOT NULL DEFAULT '[]',
+  title           TEXT NOT NULL DEFAULT '',
+  checksPassed    INTEGER NOT NULL DEFAULT 0,
+  branchClean     INTEGER NOT NULL DEFAULT 0,
+  createdAt       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_taskId ON reviews(taskId);
 `
 
 // ---------------------------------------------------------------------------
@@ -1005,4 +1028,166 @@ export function getDispatchQueueStatus(knownAgents: Set<string>): Array<{
       readySince: row.readySince,
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// DAO — Reviews (auto-review / auto-merge policy)
+// ---------------------------------------------------------------------------
+
+export type ReviewRecord = {
+  id: string
+  taskId: string | null
+  author: string
+  reviewer: string
+  riskLevel: string
+  riskScore: number
+  riskSignals: string[]
+  riskReason: string
+  outcome: string
+  mergeRecommendation: string
+  autoMergeEligible: boolean
+  checklist: Array<{ name: string; passed: boolean; detail: string }>
+  summary: string
+  filesChanged: string[]
+  title: string
+  checksPassed: boolean
+  branchClean: boolean
+  createdAt: number
+}
+
+type ReviewRow = {
+  id: string
+  taskId: string | null
+  author: string
+  reviewer: string
+  riskLevel: string
+  riskScore: number
+  riskSignals: string
+  riskReason: string
+  outcome: string
+  mergeRecommendation: string
+  autoMergeEligible: number
+  checklistJson: string
+  summary: string
+  filesChanged: string
+  title: string
+  checksPassed: number
+  branchClean: number
+  createdAt: number
+}
+
+function rowToReview(row: ReviewRow): ReviewRecord {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    author: row.author,
+    reviewer: row.reviewer,
+    riskLevel: row.riskLevel,
+    riskScore: row.riskScore,
+    riskSignals: JSON.parse(row.riskSignals),
+    riskReason: row.riskReason,
+    outcome: row.outcome,
+    mergeRecommendation: row.mergeRecommendation,
+    autoMergeEligible: Boolean(row.autoMergeEligible),
+    checklist: JSON.parse(row.checklistJson),
+    summary: row.summary,
+    filesChanged: JSON.parse(row.filesChanged),
+    title: row.title,
+    checksPassed: Boolean(row.checksPassed),
+    branchClean: Boolean(row.branchClean),
+    createdAt: row.createdAt,
+  }
+}
+
+export function createReview(input: {
+  id: string
+  taskId?: string | null
+  author: string
+  reviewer: string
+  riskLevel: string
+  riskScore: number
+  riskSignals: string[]
+  riskReason: string
+  outcome: string
+  mergeRecommendation: string
+  autoMergeEligible: boolean
+  checklist: Array<{ name: string; passed: boolean; detail: string }>
+  summary: string
+  filesChanged: string[]
+  title: string
+  checksPassed: boolean
+  branchClean: boolean
+}): ReviewRecord {
+  const db = getDb()
+  const now = Date.now()
+
+  db.prepare(`
+    INSERT INTO reviews (id, taskId, author, reviewer, riskLevel, riskScore, riskSignals, riskReason, outcome, mergeRecommendation, autoMergeEligible, checklistJson, summary, filesChanged, title, checksPassed, branchClean, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.id,
+    input.taskId ?? null,
+    input.author,
+    input.reviewer,
+    input.riskLevel,
+    input.riskScore,
+    JSON.stringify(input.riskSignals),
+    input.riskReason,
+    input.outcome,
+    input.mergeRecommendation,
+    input.autoMergeEligible ? 1 : 0,
+    JSON.stringify(input.checklist),
+    input.summary,
+    JSON.stringify(input.filesChanged),
+    input.title,
+    input.checksPassed ? 1 : 0,
+    input.branchClean ? 1 : 0,
+    now,
+  )
+
+  // If linked to a task, add a system comment with the review outcome
+  if (input.taskId) {
+    const commentText = [
+      `Auto-review completed by ${input.reviewer}:`,
+      `  Risk: ${input.riskLevel} | Outcome: ${input.outcome}`,
+      `  Merge: ${input.mergeRecommendation} | Auto-merge: ${input.autoMergeEligible ? 'eligible' : 'no'}`,
+    ].join('\n')
+
+    db.prepare('INSERT INTO task_comments (id, taskId, author, type, text, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
+      randomUUID(), input.taskId, input.reviewer, 'system', commentText, now,
+    )
+    db.prepare('UPDATE tasks SET updatedAt = ? WHERE id = ?').run(now, input.taskId)
+  }
+
+  return {
+    ...input,
+    taskId: input.taskId ?? null,
+    riskSignals: input.riskSignals,
+    checklist: input.checklist,
+    filesChanged: input.filesChanged,
+    checksPassed: input.checksPassed,
+    branchClean: input.branchClean,
+    autoMergeEligible: input.autoMergeEligible,
+    createdAt: now,
+  }
+}
+
+export function getReview(reviewId: string): ReviewRecord | null {
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM reviews WHERE id = ?').get(reviewId) as ReviewRow | undefined
+  return row ? rowToReview(row) : null
+}
+
+export function listReviews(taskId?: string): ReviewRecord[] {
+  const db = getDb()
+  const rows = taskId
+    ? db.prepare('SELECT * FROM reviews WHERE taskId = ? ORDER BY createdAt DESC').all(taskId) as ReviewRow[]
+    : db.prepare('SELECT * FROM reviews ORDER BY createdAt DESC LIMIT 50').all() as ReviewRow[]
+  return rows.map(rowToReview)
+}
+
+export function getLatestReviewForTask(taskId: string): ReviewRecord | null {
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM reviews WHERE taskId = ? ORDER BY createdAt DESC LIMIT 1').get(taskId) as ReviewRow | undefined
+  return row ? rowToReview(row) : null
 }
