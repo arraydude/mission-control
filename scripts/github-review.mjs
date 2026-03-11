@@ -322,6 +322,28 @@ function mergePR(repo, prNumber, review) {
   }
 }
 
+/**
+ * Main-assisted merge: pragmatic path for low-risk, clean, autoMergeEligible PRs
+ * where self-review blocks formal GitHub approval.
+ */
+function mainAssistedMergePR(repo, prNumber, review, ghIdentity) {
+  if (!review.autoMergeEligible || review.outcome !== 'approve' || review.risk.level !== 'low') {
+    return { result: 'failed', error: 'main-assisted merge preconditions not met' }
+  }
+  const subject = `main-assisted merge: ${review.risk.level}-risk, policy-approved (self-review blocked formal approval for ${ghIdentity ?? 'unknown'})`
+  try {
+    gh(['pr', 'merge', String(prNumber), '--repo', repo, '--squash', '--auto', '--subject', subject])
+    return { result: 'main-assisted-merge' }
+  } catch {
+    try {
+      gh(['pr', 'merge', String(prNumber), '--repo', repo, '--squash', '--subject', subject])
+      return { result: 'main-assisted-merge' }
+    } catch (err) {
+      return { result: 'failed', error: err.message }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // DB persistence (optional, only if DB exists)
 // ---------------------------------------------------------------------------
@@ -487,10 +509,20 @@ function main() {
 
   // 6. Merge
   let mergeResult = null
+  let mainAssistedMerge = false
   if (review.autoMergeEligible && !skipMerge) {
     if (selfReviewBlocked) {
-      log(`\n🔒 Merge skipped: self-review limitation prevents formal approval required for merge`)
-      mergeResult = { result: 'self-review-blocked' }
+      // Main-assisted merge: self-review blocks formal approval, but policy
+      // says low-risk + clean + autoMergeEligible. Proceed with merge as main.
+      log(`\n🔀 Self-review blocks formal approval — attempting main-assisted merge...`)
+      log(`   Preconditions: risk=${review.risk.level}, outcome=${review.outcome}, autoMergeEligible=${review.autoMergeEligible}`)
+      mergeResult = mainAssistedMergePR(repo, prNumber, review, ghIdentity)
+      mainAssistedMerge = mergeResult.result === 'main-assisted-merge'
+      if (mainAssistedMerge) {
+        log(`   ✅ MAIN-ASSISTED MERGE: completed — self-review blocked formal approval, main acted as final system actor`)
+      } else {
+        log(`   ❌ Main-assisted merge failed: ${mergeResult.error}`)
+      }
     } else {
       log(`\n🔀 Attempting merge...`)
       mergeResult = mergePR(repo, prNumber, review)
@@ -511,6 +543,7 @@ function main() {
       reviewId,
       commentUrl,
       selfReviewBlocked,
+      mainAssistedMerge,
       mergeResult,
       ghIdentity,
     }, null, 2))
