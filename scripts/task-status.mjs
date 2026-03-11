@@ -85,12 +85,29 @@ if (!task) {
 
 const now = Date.now()
 
+// Check if dispatcher v2 columns exist
+const hasDispatcherV2 = taskColumns.has('actionableVersion')
+
 const update = db.transaction(() => {
   db.prepare('UPDATE tasks SET status = ?, updatedAt = ? WHERE id = ?').run(to, now, task.id)
 
   // Clear claim when moving back to inbox/ready when claim columns exist.
   if (hasClaimColumns && (to === 'inbox' || to === 'ready')) {
     db.prepare('UPDATE tasks SET claimedBy = NULL, claimedAt = NULL WHERE id = ?').run(task.id)
+  }
+
+  // Dispatcher v2: bump actionableVersion when entering ready, manage readySince
+  if (hasDispatcherV2) {
+    if (to === 'ready' && task.status !== 'ready') {
+      db.prepare('UPDATE tasks SET actionableVersion = actionableVersion + 1, readySince = ?, dispatchAttempts = 0, lastDispatchError = NULL WHERE id = ?')
+        .run(now, task.id)
+    } else if (to !== 'ready' && task.status === 'ready') {
+      db.prepare('UPDATE tasks SET readySince = NULL WHERE id = ?').run(task.id)
+    }
+    // Clear dispatch lock and activeRunId when leaving doing
+    if (task.status === 'doing' && to !== 'doing') {
+      db.prepare('UPDATE tasks SET dispatchLock = NULL, activeRunId = NULL WHERE id = ?').run(task.id)
+    }
   }
 
   if (comment) {

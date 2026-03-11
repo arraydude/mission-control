@@ -49,6 +49,11 @@ export type DispatchMeta = {
   lastDispatchedAt: number | null
   dispatchAttempts: number
   lastDispatchError: string | null
+  actionableVersion: number
+  lastDispatchedVersion: number
+  dispatchLock: number | null
+  activeRunId: string | null
+  readySince: number | null
 }
 
 export type DispatchEvent = {
@@ -70,6 +75,7 @@ const TASK_STATUSES = new Set<MissionTaskStatus>(['inbox', 'ready', 'doing', 'bl
 const TASK_PRIORITIES = new Set<MissionTaskPriority>(['low', 'medium', 'high'])
 const COMMENT_TYPES = new Set<TaskCommentType>(['progress', 'blocker', 'decision', 'result', 'system'])
 const MAX_DISPATCH_ATTEMPTS = 5
+const IN_FLIGHT_STALE_MS = 5 * 60 * 1000 // 5 min — in-flight dispatches older than this are considered stale
 
 const DB_DIR = path.join(process.cwd(), 'data')
 const DB_PATH = path.join(DB_DIR, 'mission-control.db')
@@ -144,6 +150,12 @@ export function getDb(): Database.Database {
     'ALTER TABLE tasks ADD COLUMN claimedBy TEXT',
     'ALTER TABLE tasks ADD COLUMN claimedAt INTEGER',
     'ALTER TABLE tasks ADD COLUMN resultSummary TEXT',
+    // Dispatcher v2 columns
+    'ALTER TABLE tasks ADD COLUMN actionableVersion INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE tasks ADD COLUMN lastDispatchedVersion INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE tasks ADD COLUMN dispatchLock INTEGER',
+    'ALTER TABLE tasks ADD COLUMN activeRunId TEXT',
+    'ALTER TABLE tasks ADD COLUMN readySince INTEGER',
   ]) {
     try { _db.exec(col) } catch { /* column already exists */ }
   }
@@ -280,6 +292,11 @@ type TaskRow = {
   lastDispatchedAt: number | null
   dispatchAttempts: number
   lastDispatchError: string | null
+  actionableVersion: number
+  lastDispatchedVersion: number
+  dispatchLock: number | null
+  activeRunId: string | null
+  readySince: number | null
 }
 
 function rowToTask(row: TaskRow, comments: TaskComment[]): MissionTask {
@@ -300,12 +317,15 @@ function rowToTask(row: TaskRow, comments: TaskComment[]): MissionTask {
     },
   }
 
-  if (row.lastDispatchedAt !== null || row.dispatchAttempts > 0 || row.lastDispatchError !== null) {
-    task.dispatch = {
-      lastDispatchedAt: row.lastDispatchedAt,
-      dispatchAttempts: row.dispatchAttempts,
-      lastDispatchError: row.lastDispatchError,
-    }
+  task.dispatch = {
+    lastDispatchedAt: row.lastDispatchedAt,
+    dispatchAttempts: row.dispatchAttempts,
+    lastDispatchError: row.lastDispatchError,
+    actionableVersion: row.actionableVersion ?? 0,
+    lastDispatchedVersion: row.lastDispatchedVersion ?? 0,
+    dispatchLock: row.dispatchLock ?? null,
+    activeRunId: row.activeRunId ?? null,
+    readySince: row.readySince ?? null,
   }
 
   return task
@@ -361,10 +381,14 @@ export function createTask(input: Partial<MissionTask>): MissionTask {
   const assignedAgent = input.assignedAgent?.trim() || null
   const description = input.description?.trim() ?? ''
 
+  const isActionable = status === 'ready' && assignedAgent !== null
+  const actionableVersion = isActionable ? 1 : 0
+  const readySince = status === 'ready' ? now : null
+
   db.prepare(`
-    INSERT INTO tasks (id, title, description, priority, status, assignedAgent, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, title, description, priority, status, assignedAgent, now, now)
+    INSERT INTO tasks (id, title, description, priority, status, assignedAgent, createdAt, updatedAt, actionableVersion, readySince)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, title, description, priority, status, assignedAgent, now, now, actionableVersion, readySince)
 
   return {
     id,
@@ -380,6 +404,16 @@ export function createTask(input: Partial<MissionTask>): MissionTask {
     claim: {
       claimedBy: null,
       claimedAt: null,
+    },
+    dispatch: {
+      lastDispatchedAt: null,
+      dispatchAttempts: 0,
+      lastDispatchError: null,
+      actionableVersion,
+      lastDispatchedVersion: 0,
+      dispatchLock: null,
+      activeRunId: null,
+      readySince,
     },
   }
 }
@@ -430,6 +464,51 @@ export function patchTask(taskId: string, patch: MissionTaskPatch): MissionTask 
     const now = Date.now()
     updates.push('updatedAt = @updatedAt')
     params.updatedAt = now
+
+    // Determine the effective status/agent after patch
+    const newStatus = (patch.status as string) ?? existing.status
+    const newAgent = patch.assignedAgent !== undefined
+      ? (typeof patch.assignedAgent === 'string' && patch.assignedAgent.trim() ? patch.assignedAgent.trim() : null)
+      : existing.assignedAgent
+
+    // Bump actionableVersion when actionability-changing fields mutate while task is/becomes ready
+    const statusChanged = typeof patch.status === 'string' && patch.status !== existing.status
+    const agentChanged = patch.assignedAgent !== undefined && newAgent !== existing.assignedAgent
+    const priorityChanged = typeof patch.priority === 'string' && patch.priority !== existing.priority
+    const descriptionChanged = typeof patch.description === 'string' && patch.description.trim() !== existing.description.trim()
+
+    const becomesReady = newStatus === 'ready'
+    const wasReady = existing.status === 'ready'
+
+    const shouldBumpVersion =
+      (statusChanged && becomesReady) ||                    // enters ready
+      (becomesReady && agentChanged) ||                     // agent changed while ready
+      (wasReady && becomesReady && priorityChanged) ||      // priority changed while ready
+      (wasReady && becomesReady && descriptionChanged)      // description changed while ready
+
+    if (shouldBumpVersion) {
+      updates.push('actionableVersion = actionableVersion + 1')
+    }
+
+    // Set readySince when task enters ready, clear when it leaves
+    if (statusChanged && becomesReady) {
+      updates.push('readySince = @readySince')
+      params.readySince = now
+    } else if (statusChanged && !becomesReady) {
+      updates.push('readySince = NULL')
+    }
+
+    // Clear dispatch lock and activeRunId when task leaves doing
+    if (statusChanged && existing.status === 'doing') {
+      updates.push('dispatchLock = NULL')
+      updates.push('activeRunId = NULL')
+    }
+
+    // Reset dispatch metadata when task re-enters ready (fresh dispatch cycle)
+    if (statusChanged && becomesReady && !wasReady) {
+      updates.push('dispatchAttempts = 0')
+      updates.push('lastDispatchError = NULL')
+    }
 
     const doUpdate = db.transaction(() => {
       db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = @id`).run(params)
@@ -664,5 +743,238 @@ export function getReadyTasksForDispatch(cooldownMs: number): MissionTask[] {
       text: c.text,
       createdAt: c.createdAt,
     })))
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Dispatcher v2 — Eligibility, occupancy, locking
+// ---------------------------------------------------------------------------
+
+const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
+
+/**
+ * Check if an agent is currently occupied.
+ * An agent is occupied if it has a task in 'doing' status OR has an in-flight
+ * dispatch (task dispatched but not yet claimed by the agent).
+ */
+export function isAgentOccupied(agentId: string): boolean {
+  const db = getDb()
+  const now = Date.now()
+  const row = db.prepare(`
+    SELECT COUNT(*) as c FROM tasks
+    WHERE assignedAgent = ? AND (
+      status = 'doing'
+      OR (status = 'ready' AND lastDispatchedVersion >= actionableVersion AND lastDispatchedAt > ?)
+    )
+  `).get(agentId, now - IN_FLIGHT_STALE_MS) as { c: number }
+  return row.c > 0
+}
+
+/**
+ * Get all tasks actively being worked by an agent (status = 'doing').
+ */
+export function getActiveTasksForAgent(agentId: string): MissionTask[] {
+  const db = getDb()
+  const rows = db.prepare(`SELECT * FROM tasks WHERE assignedAgent = ? AND status = 'doing'`).all(agentId) as TaskRow[]
+  return rows.map((row) => rowToTask(row, []))
+}
+
+/**
+ * Get dispatch-eligible tasks: ready, assigned, agent is known,
+ * actionableVersion > lastDispatchedVersion, no active dispatch lock, no active run.
+ * Ordered by priority (high first), then readySince (oldest first), then id.
+ */
+export function getDispatchEligibleTasks(knownAgents: Set<string>): MissionTask[] {
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT * FROM tasks
+    WHERE status = 'ready'
+      AND assignedAgent IS NOT NULL
+      AND actionableVersion > lastDispatchedVersion
+      AND (dispatchLock IS NULL OR dispatchLock < ?)
+      AND activeRunId IS NULL
+    ORDER BY
+      CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END ASC,
+      COALESCE(readySince, createdAt) ASC,
+      id ASC
+  `).all(Date.now() - 60000) as TaskRow[] // Stale lock threshold: 60s
+
+  return rows
+    .filter((row) => knownAgents.has(row.assignedAgent!))
+    .map((row) => rowToTask(row, []))
+}
+
+/**
+ * Get tasks assigned to unknown/unroutable agents.
+ */
+export function getUnroutableTasks(knownAgents: Set<string>): MissionTask[] {
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT * FROM tasks
+    WHERE status = 'ready'
+      AND assignedAgent IS NOT NULL
+      AND actionableVersion > lastDispatchedVersion
+  `).all() as TaskRow[]
+
+  return rows
+    .filter((row) => !knownAgents.has(row.assignedAgent!))
+    .map((row) => rowToTask(row, []))
+}
+
+/**
+ * Acquire a dispatch lock for a task. Returns true if lock acquired.
+ */
+export function acquireDispatchLock(taskId: string): boolean {
+  const db = getDb()
+  const now = Date.now()
+  const result = db.prepare(`
+    UPDATE tasks SET dispatchLock = ?
+    WHERE id = ? AND (dispatchLock IS NULL OR dispatchLock < ?)
+  `).run(now, taskId, now - 60000) // 60s stale lock threshold
+  return result.changes > 0
+}
+
+/**
+ * Release dispatch lock for a task.
+ */
+export function releaseDispatchLock(taskId: string): void {
+  const db = getDb()
+  db.prepare('UPDATE tasks SET dispatchLock = NULL WHERE id = ?').run(taskId)
+}
+
+/**
+ * Record a dispatch outcome (v2): persist dispatch metadata without changing task status.
+ */
+export function recordDispatchV2(
+  taskId: string,
+  agentId: string,
+  outcome: 'dispatched' | 'error' | 'unknown_agent',
+  opts?: { error?: string; runId?: string }
+) {
+  const db = getDb()
+  const now = Date.now()
+
+  const run = db.transaction(() => {
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow | undefined
+    if (!task) return
+
+    if (outcome === 'dispatched') {
+      // Record dispatch metadata only — the agent is responsible for
+      // transitioning ready → doing when it actually claims the task.
+      db.prepare(`
+        UPDATE tasks
+        SET updatedAt = ?,
+            lastDispatchedAt = ?, dispatchAttempts = dispatchAttempts + 1,
+            lastDispatchError = NULL, dispatchLock = NULL,
+            lastDispatchedVersion = actionableVersion,
+            activeRunId = ?
+        WHERE id = ?
+      `).run(now, now, opts?.runId ?? null, taskId)
+
+      db.prepare('INSERT INTO task_comments (id, taskId, author, type, text, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
+        randomUUID(), taskId, 'system', 'system', `Task dispatched to ${agentId} (v${task.actionableVersion})`, now
+      )
+    } else {
+      const newAttempts = (task.dispatchAttempts ?? 0) + 1
+      const errorMsg = opts?.error ?? `Dispatch ${outcome}`
+
+      if (newAttempts >= MAX_DISPATCH_ATTEMPTS) {
+        db.prepare(`
+          UPDATE tasks SET status = 'blocked', updatedAt = ?, dispatchAttempts = ?,
+            lastDispatchError = ?, lastDispatchedAt = ?, dispatchLock = NULL
+          WHERE id = ?
+        `).run(now, newAttempts, `Blocked after ${newAttempts} failed attempts: ${errorMsg}`, now, taskId)
+      } else {
+        db.prepare(`
+          UPDATE tasks SET dispatchAttempts = ?, lastDispatchError = ?,
+            lastDispatchedAt = ?, dispatchLock = NULL
+          WHERE id = ?
+        `).run(newAttempts, errorMsg, now, taskId)
+      }
+    }
+
+    db.prepare('INSERT INTO task_dispatch_events (id, taskId, agentId, eventType, message, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
+      randomUUID(), taskId, agentId, outcome, opts?.error ?? null, now
+    )
+  })
+
+  run()
+}
+
+/**
+ * Get agent availability summary for all known agents.
+ */
+export function getAgentOccupancy(knownAgents: Set<string>): Array<{ agentId: string; busy: boolean; activeTaskId: string | null; activeTaskTitle: string | null }> {
+  const db = getDb()
+  const now = Date.now()
+  return [...knownAgents].map((agentId) => {
+    // Check for tasks actively being worked
+    const active = db.prepare(`
+      SELECT id, title FROM tasks WHERE assignedAgent = ? AND status = 'doing' LIMIT 1
+    `).get(agentId) as { id: string; title: string } | undefined
+
+    if (active) {
+      return { agentId, busy: true, activeTaskId: active.id, activeTaskTitle: active.title }
+    }
+
+    // Check for in-flight dispatches (dispatched but not yet claimed)
+    const inFlight = db.prepare(`
+      SELECT id, title FROM tasks
+      WHERE assignedAgent = ? AND status = 'ready'
+        AND lastDispatchedVersion >= actionableVersion AND lastDispatchedAt > ?
+      LIMIT 1
+    `).get(agentId, now - IN_FLIGHT_STALE_MS) as { id: string; title: string } | undefined
+
+    return {
+      agentId,
+      busy: !!inFlight,
+      activeTaskId: inFlight?.id ?? null,
+      activeTaskTitle: inFlight?.title ?? null,
+    }
+  })
+}
+
+/**
+ * Get dispatch queue status: tasks waiting to be dispatched and why they're waiting.
+ */
+export function getDispatchQueueStatus(knownAgents: Set<string>): Array<{
+  taskId: string; title: string; assignedAgent: string; priority: string;
+  waitReason: string; actionableVersion: number; lastDispatchedVersion: number;
+  dispatchAttempts: number; lastDispatchError: string | null; readySince: number | null
+}> {
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT * FROM tasks WHERE status = 'ready' AND assignedAgent IS NOT NULL
+    ORDER BY
+      CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END ASC,
+      COALESCE(readySince, createdAt) ASC
+  `).all() as TaskRow[]
+
+  return rows.map((row) => {
+    let waitReason = 'eligible'
+    if (!knownAgents.has(row.assignedAgent!)) {
+      waitReason = `unknown agent: ${row.assignedAgent}`
+    } else if (row.actionableVersion <= row.lastDispatchedVersion) {
+      waitReason = 'dispatched — awaiting agent claim'
+    } else if (row.dispatchLock && row.dispatchLock > Date.now() - 60000) {
+      waitReason = 'dispatch in progress (locked)'
+    } else if (row.activeRunId) {
+      waitReason = `active run: ${row.activeRunId}`
+    } else if (isAgentOccupied(row.assignedAgent!)) {
+      waitReason = `agent ${row.assignedAgent} is busy`
+    }
+
+    return {
+      taskId: row.id,
+      title: row.title,
+      assignedAgent: row.assignedAgent!,
+      priority: row.priority,
+      waitReason,
+      actionableVersion: row.actionableVersion,
+      lastDispatchedVersion: row.lastDispatchedVersion,
+      dispatchAttempts: row.dispatchAttempts,
+      lastDispatchError: row.lastDispatchError,
+      readySince: row.readySince,
+    }
   })
 }
