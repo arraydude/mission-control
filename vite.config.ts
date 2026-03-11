@@ -1,12 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
-import { execFileSync, execFile } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import * as db from './server/db.js'
+import * as dispatcher from './server/dispatcher.js'
 
 type SessionEntry = {
   sessionId?: string
@@ -130,10 +131,6 @@ const DB_PATH = path.join(process.cwd(), 'data', 'mission-control.db')
 const AGENT_LOGS_API_PATH = '/api/openclaw/agents'
 const AGENT_LOG_LIMIT = 50
 
-// --- Dispatcher constants ---
-const DISPATCHER_INTERVAL_MS = 60 * 1000 // 1 minute
-const DISPATCH_COOLDOWN_MS = 30 * 60 * 1000 // 30 min cooldown before re-dispatch
-const KNOWN_AGENTS = new Set(['main', 'mida'])
 const DISPATCHER_API_PATH = '/api/mission-control/dispatcher'
 
 function readJsonFile<T>(filePath: string, fallback: T): T {
@@ -619,133 +616,6 @@ function getAgentLogs(agentId: string): AgentLogEntry[] {
     .slice(0, AGENT_LOG_LIMIT)
 }
 
-// --- Task Dispatcher ---
-
-type DispatchResult = {
-  taskId: string
-  taskTitle: string
-  agent: string
-  outcome: 'dispatched' | 'cooldown' | 'unknown_agent' | 'error'
-  error?: string
-  timestamp: number
-}
-
-type DispatcherState = {
-  running: boolean
-  lastRunAt: number | null
-  lastResults: DispatchResult[]
-  intervalHandle: ReturnType<typeof setInterval> | null
-}
-
-const dispatcherState: DispatcherState = {
-  running: false,
-  lastRunAt: null,
-  lastResults: [],
-  intervalHandle: null,
-}
-
-function dispatchToAgent(agentId: string, task: MissionTask): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const message = `[Mission Control Dispatch] Task: "${task.title}" (id: ${task.id}, priority: ${task.priority})\n\nDescription:\n${task.description}\n\nInstructions: Pick up this task. Change status from ready → doing when you start. Use the task-status script when done.`
-
-    execFile('openclaw', ['agent', '--agent', agentId, '-m', message, '--json'], {
-      encoding: 'utf8',
-      timeout: 120_000,
-    }, (error, stdout, stderr) => {
-      if (error) {
-        resolve({ ok: false, error: error.message.slice(0, 200) })
-      } else {
-        resolve({ ok: true })
-      }
-    })
-  })
-}
-
-function notifyBlocker(message: string) {
-  execFile('openclaw', ['system', 'event', '--text', message, '--mode', 'now'], {
-    encoding: 'utf8',
-    timeout: 15_000,
-  }, () => {
-    // fire-and-forget
-  })
-}
-
-async function runDispatchCycle(): Promise<DispatchResult[]> {
-  const now = Date.now()
-  const results: DispatchResult[] = []
-
-  // Get ready tasks directly from SQLite (with cooldown filtering)
-  const readyTasks = db.getReadyTasksForDispatch(DISPATCH_COOLDOWN_MS)
-
-  // Also check for ready tasks in cooldown to report them
-  const allReady = db.listTasks().filter((t) => t.status === 'ready' && t.assignedAgent)
-  const readyIds = new Set(readyTasks.map((t) => t.id))
-  for (const task of allReady) {
-    if (!readyIds.has(task.id)) {
-      results.push({ taskId: task.id, taskTitle: task.title, agent: task.assignedAgent!, outcome: 'cooldown', timestamp: now })
-    }
-  }
-
-  for (const task of readyTasks) {
-    const agent = task.assignedAgent!
-
-    // Check if agent is known
-    if (!KNOWN_AGENTS.has(agent)) {
-      const error = `Unknown agent "${agent}" assigned to task "${task.title}"`
-      results.push({ taskId: task.id, taskTitle: task.title, agent, outcome: 'unknown_agent', error, timestamp: now })
-
-      const prevError = task.dispatch?.lastDispatchError
-      if (prevError !== error) {
-        notifyBlocker(`⚠️ Mission Control Dispatcher: ${error}`)
-      }
-
-      db.recordDispatch(task.id, agent, 'unknown_agent', error)
-      continue
-    }
-
-    // Dispatch
-    const dispatchResult = await dispatchToAgent(agent, task)
-
-    if (dispatchResult.ok) {
-      db.recordDispatch(task.id, agent, 'dispatched')
-      results.push({ taskId: task.id, taskTitle: task.title, agent, outcome: 'dispatched', timestamp: now })
-    } else {
-      const error = dispatchResult.error ?? 'Dispatch failed'
-      db.recordDispatch(task.id, agent, 'error', error)
-      results.push({ taskId: task.id, taskTitle: task.title, agent, outcome: 'error', error, timestamp: now })
-      notifyBlocker(`⚠️ Mission Control Dispatcher: Failed to dispatch "${task.title}" to ${agent}: ${error.slice(0, 100)}`)
-    }
-  }
-
-  dispatcherState.lastRunAt = now
-  dispatcherState.lastResults = results
-  return results
-}
-
-function startDispatcher() {
-  if (dispatcherState.running) return
-  dispatcherState.running = true
-
-  console.log(`[dispatcher] Started — polling every ${DISPATCHER_INTERVAL_MS / 1000}s for ready tasks`)
-
-  // Run first cycle after a short delay (let server boot)
-  setTimeout(() => {
-    void runDispatchCycle().catch((err) => console.error('[dispatcher] Cycle error:', err))
-  }, 5_000)
-
-  dispatcherState.intervalHandle = setInterval(() => {
-    void runDispatchCycle().catch((err) => console.error('[dispatcher] Cycle error:', err))
-  }, DISPATCHER_INTERVAL_MS)
-}
-
-function stopDispatcher() {
-  if (!dispatcherState.running) return
-  if (dispatcherState.intervalHandle) clearInterval(dispatcherState.intervalHandle)
-  dispatcherState.running = false
-  dispatcherState.intervalHandle = null
-  console.log('[dispatcher] Stopped')
-}
-
 function createMissionControlState() {
   const configPath = path.join(OPENCLAW_HOME, 'openclaw.json')
   const config = readJsonFile<OpenClawConfig>(configPath, {})
@@ -966,6 +836,7 @@ function missionControlApiPlugin() {
         const body = await readBody(req)
         const input = body ? (JSON.parse(body) as Partial<MissionTask>) : {}
         const task = db.createTask(input)
+        dispatcher.onTaskCreated(task)
         sendJson(res, 201, { task })
         return
       }
@@ -993,9 +864,13 @@ function missionControlApiPlugin() {
         return
       }
 
+      const previousTask = db.getTask(taskId)
+      if (!previousTask) { sendJson(res, 404, { error: 'Task not found.' }); return }
+
       const body = await readBody(req)
       const patch = body ? (JSON.parse(body) as MissionTaskPatch) : {}
       const task = db.patchTask(taskId, patch)
+      dispatcher.onTaskPatched(taskId, patch, previousTask, task)
       sendJson(res, 200, { task })
     } catch (error) {
       sendJson(res, 400, { error: error instanceof Error ? error.message : 'Task update failed.' })
@@ -1058,6 +933,7 @@ function missionControlApiPlugin() {
       if (!input.agent?.trim()) { sendJson(res, 400, { error: 'Agent ID is required to claim a task.' }); return }
 
       const task = db.claimTask(taskId, input.agent.trim())
+      dispatcher.onTaskClaimed(task)
       sendJson(res, 200, { task, claimed: true })
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Claim failed.'
@@ -1068,14 +944,10 @@ function missionControlApiPlugin() {
 
   const handleDispatcher = async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method === 'GET') {
+      const status = dispatcher.getStatus()
       sendJson(res, 200, {
-        running: dispatcherState.running,
-        lastRunAt: dispatcherState.lastRunAt,
-        lastRunLabel: formatRelativeTime(dispatcherState.lastRunAt ?? undefined),
-        lastResults: dispatcherState.lastResults,
-        intervalMs: DISPATCHER_INTERVAL_MS,
-        cooldownMs: DISPATCH_COOLDOWN_MS,
-        knownAgents: [...KNOWN_AGENTS],
+        ...status,
+        lastEvalLabel: formatRelativeTime(status.lastEvalAt ?? undefined),
       })
       return
     }
@@ -1084,23 +956,35 @@ function missionControlApiPlugin() {
       const url = new URL(req.url ?? '', 'http://mission-control.local')
       const action = url.searchParams.get('action')
 
+      if (action === 'enable') {
+        dispatcher.enable()
+        sendJson(res, 200, { enabled: true })
+        return
+      }
+      if (action === 'disable') {
+        dispatcher.disable()
+        sendJson(res, 200, { enabled: false })
+        return
+      }
+
+      // Also support legacy start/stop
       if (action === 'start') {
-        startDispatcher()
-        sendJson(res, 200, { running: true })
+        dispatcher.enable()
+        sendJson(res, 200, { enabled: true })
         return
       }
       if (action === 'stop') {
-        stopDispatcher()
-        sendJson(res, 200, { running: false })
+        dispatcher.disable()
+        sendJson(res, 200, { enabled: false })
         return
       }
 
       // Manual single-cycle trigger
       try {
-        const results = await runDispatchCycle()
-        sendJson(res, 200, { triggered: true, results })
+        const outcomes = await dispatcher.triggerEvaluation()
+        sendJson(res, 200, { triggered: true, outcomes })
       } catch (error) {
-        sendJson(res, 500, { error: error instanceof Error ? error.message : 'Dispatch cycle failed.' })
+        sendJson(res, 500, { error: error instanceof Error ? error.message : 'Dispatch evaluation failed.' })
       }
       return
     }
@@ -1166,11 +1050,10 @@ function missionControlApiPlugin() {
     name: 'mission-control-openclaw-api',
     configureServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
       install(server)
-      // Dispatcher is opt-in: start only via POST /api/mission-control/dispatcher
-      // or by setting MC_DISPATCHER=1 env var. Auto-start was causing runaway
-      // dispatch loops on every vite dev boot.
+      // Dispatcher v2 is event-driven (reacts to task mutations), not polling-based.
+      // Enable via MC_DISPATCHER=1 env var or POST /api/mission-control/dispatcher?action=enable
       if (process.env.MC_DISPATCHER === '1') {
-        startDispatcher()
+        dispatcher.enable()
       }
     },
     configurePreviewServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
