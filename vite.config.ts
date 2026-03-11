@@ -11,6 +11,7 @@ import * as db from './server/db.js'
 import * as dispatcher from './server/dispatcher.js'
 import { autoAssignIfMissing } from './server/routing-policy.js'
 import * as reviewPolicy from './server/review-policy.js'
+import * as github from './server/github.js'
 
 type SessionEntry = {
   sessionId?: string
@@ -136,6 +137,7 @@ const AGENT_LOG_LIMIT = 50
 
 const DISPATCHER_API_PATH = '/api/mission-control/dispatcher'
 const REVIEWS_API_PATH = '/api/mission-control/reviews'
+const GITHUB_REVIEW_API_PATH = '/api/mission-control/github/review'
 
 function readJsonFile<T>(filePath: string, fallback: T): T {
   try {
@@ -1103,6 +1105,103 @@ function missionControlApiPlugin() {
     sendJson(res, 405, { error: 'Method not allowed.' })
   }
 
+  // ── GitHub PR Review endpoint ──────────────────────────────────────────
+  const handleGitHubReview = async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'Method not allowed. Use POST.' })
+        return
+      }
+
+      const body = await readBody(req)
+      const payload = JSON.parse(body)
+
+      // Accept either { repo, pr } or { url } or { ref }
+      let repo: string | undefined
+      let prNumber: number | undefined
+
+      if (payload.repo && payload.pr) {
+        repo = payload.repo
+        prNumber = Number(payload.pr)
+      } else if (payload.url || payload.ref) {
+        const parsed = github.parsePRRef(payload.url ?? payload.ref, payload.repo)
+        if (!parsed) {
+          sendJson(res, 400, { error: `Cannot parse PR reference: ${payload.url ?? payload.ref}` })
+          return
+        }
+        repo = parsed.repo
+        prNumber = parsed.prNumber
+      } else {
+        sendJson(res, 400, { error: 'Request must include { repo, pr } or { url } or { ref }' })
+        return
+      }
+
+      if (!repo || !prNumber || isNaN(prNumber)) {
+        sendJson(res, 400, { error: 'Invalid repo or PR number' })
+        return
+      }
+
+      const result = github.reviewGitHubPR(repo, prNumber, {
+        taskId: payload.taskId,
+        dryRun: payload.dryRun === true,
+        skipMerge: payload.skipMerge === true,
+      })
+
+      // Persist the review to DB
+      const reviewId = crypto.randomUUID()
+      const record = db.createReview({
+        id: reviewId,
+        taskId: payload.taskId ?? null,
+        author: result.review.author,
+        reviewer: result.review.reviewer,
+        riskLevel: result.review.risk.level,
+        riskScore: result.review.risk.score,
+        riskSignals: result.review.risk.signals,
+        riskReason: result.review.risk.reason,
+        outcome: result.review.outcome,
+        mergeRecommendation: result.review.mergeRecommendation,
+        autoMergeEligible: result.review.autoMergeEligible,
+        checklist: result.review.checklist,
+        summary: result.review.summary,
+        filesChanged: result.pr.files.map(f => f.path),
+        title: result.pr.title,
+        checksPassed: result.pr.checksStatus === 'passing',
+        branchClean: result.pr.mergeable === true,
+      })
+
+      // If linked to a task, handle status transitions
+      if (payload.taskId && result.review.autoMergeEligible && result.mergeResult === 'merged') {
+        const task = db.getTask(payload.taskId)
+        if (task && task.status === 'in_review') {
+          db.patchTask(payload.taskId, { status: 'done', resultSummary: `Auto-merged PR #${prNumber}: ${result.review.summary}` })
+        }
+      } else if (payload.taskId && result.review.outcome === 'changes_requested') {
+        const task = db.getTask(payload.taskId)
+        if (task && task.status === 'in_review') {
+          db.patchTask(payload.taskId, { status: 'doing' })
+        }
+      }
+
+      sendJson(res, 200, {
+        reviewId,
+        review: record,
+        github: {
+          pr: { number: result.pr.number, title: result.pr.title, author: result.pr.author, url: result.pr.url, state: result.pr.state },
+          commentPosted: result.commentPosted,
+          commentUrl: result.commentUrl,
+          mergeAttempted: result.mergeAttempted,
+          mergeResult: result.mergeResult,
+          mergeError: result.mergeError,
+          selfReviewNote: result.selfReviewNote,
+          ghIdentity: result.ghIdentity,
+        },
+        log: result.log,
+      })
+    } catch (error) {
+      sendJson(res, 500, { error: error instanceof Error ? error.message : 'GitHub review failed.' })
+    }
+  }
+
   const install = (server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) => {
     server.middlewares.use((req, res, next) => {
       const pathname = new URL(req.url ?? '/', 'http://mission-control.local').pathname
@@ -1114,6 +1213,11 @@ function missionControlApiPlugin() {
 
       if (pathname.match(new RegExp(`^${AGENT_LOGS_API_PATH}/[^/]+/logs$`))) {
         handleAgentLogs(req, res)
+        return
+      }
+
+      if (pathname === GITHUB_REVIEW_API_PATH) {
+        void handleGitHubReview(req, res)
         return
       }
 
