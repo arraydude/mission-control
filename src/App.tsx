@@ -384,6 +384,15 @@ function AgentIdentityLabel({ agent, className = '' }: { agent: Pick<AgentCard, 
   )
 }
 
+function AgentIdentityText({ agentId, agent, className = '' }: { agentId: string; agent?: Pick<AgentCard, 'name' | 'identityEmoji'> | null; className?: string }) {
+  if (!agent) return <span className={className}>{agentId}</span>
+  return <AgentIdentityLabel agent={agent} className={className} />
+}
+
+function formatAgentOptionLabel(agent: Pick<AgentCard, 'name' | 'identityEmoji'>) {
+  return agent.identityEmoji ? `${agent.identityEmoji} ${agent.name}` : agent.name
+}
+
 const COLUMN_EMPTY_LABELS: Record<MissionTaskStatus, string> = {
   inbox: 'No new tasks',
   ready: 'Nothing queued',
@@ -476,7 +485,7 @@ function TaskCardItem({
                   ) : (
                     <UserRound className="h-2.5 w-2.5" aria-hidden="true" />
                   )}
-                  {task.assignedAgent ?? 'Unassigned'}
+                  {task.assignedAgent ? <AgentIdentityText agentId={task.assignedAgent} agent={assignedAgent} /> : 'Unassigned'}
                 </span>
               </TaskPill>
               {task.claim?.claimedBy && (
@@ -530,7 +539,7 @@ function TaskCardItem({
             {task.routing?.autoRouted && task.assignedAgent && (
               <span className="inline-flex items-center gap-1 text-violet-300">
                 <Route className="h-3 w-3" aria-hidden="true" />
-                Auto-routed to <span className="font-medium">{task.assignedAgent}</span>
+                Auto-routed to <span className="font-medium">{task.assignedAgent ? <AgentIdentityText agentId={task.assignedAgent} agent={assignedAgent} /> : null}</span>
               </span>
             )}
             {task.assignedAgent && !task.routing?.autoRouted && (
@@ -598,7 +607,7 @@ function TaskCardItem({
                   <Label className="text-xs text-zinc-500">Owner</Label>
                   <NativeSelect disabled={isSavingTask} value={editForm.assignedAgent} onChange={(e) => setEditForm((current) => ({ ...current, assignedAgent: e.target.value }))} className="w-full">
                     <NativeSelectOption value="">Unassigned</NativeSelectOption>
-                    {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{a.name}</NativeSelectOption>)}
+                    {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{formatAgentOptionLabel(a)}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
                 <div className="grid gap-1">
@@ -1162,6 +1171,7 @@ export default function App() {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [sessionsLimit, setSessionsLimit] = useState(20)
+  const [sessionsTab, setSessionsTab] = useState<'recent' | 'acp'>('recent')
 
   const handleManualRefresh = useCallback(async () => {
     setRefreshing(true)
@@ -1538,7 +1548,14 @@ export default function App() {
                                 <TaskPill className={PRIORITY_TONES[t.priority]}>{t.priority}</TaskPill>
                               </div>
                               <div className="text-sm font-medium text-zinc-100">{t.title}</div>
-                              <div className="mt-1 text-xs text-zinc-400">{t.assignedAgent ? `Owner: ${t.assignedAgent}` : 'Unassigned'}</div>
+                              <div className="mt-1 text-xs text-zinc-400">
+                                {t.assignedAgent ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span>Owner:</span>
+                                    <AgentIdentityText agentId={t.assignedAgent} agent={agentsById.get(t.assignedAgent)} />
+                                  </span>
+                                ) : 'Unassigned'}
+                              </div>
                             </button>
                           ))}
                         </div>
@@ -1591,7 +1608,7 @@ export default function App() {
                               <Label className="text-xs text-zinc-400">Agent</Label>
                               <NativeSelect value={form.assignedAgent} onChange={(e) => setForm((c) => ({ ...c, assignedAgent: e.target.value }))}>
                                 <NativeSelectOption value="">Unassigned</NativeSelectOption>
-                                {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{a.name}</NativeSelectOption>)}
+                                {(state?.agents ?? []).map((a) => <NativeSelectOption key={a.id} value={a.id}>{formatAgentOptionLabel(a)}</NativeSelectOption>)}
                               </NativeSelect>
                             </div>
                             <Button type="submit" disabled={submittingTask} className="border-orange-400/40 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20">
@@ -1641,120 +1658,159 @@ export default function App() {
               {/* ══════════════════ SESSIONS ══════════════════ */}
               <TabsContent value="sessions">
                 {state && (
-                  <div className="flex flex-col gap-5">
-                    {/* ── ACP Runs ── */}
-                    <Card className={cardClass}>
-                      <CardHeader>
-                        <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ textWrap: 'balance' }}>
-                          <Zap className="h-4 w-4 text-cyan-300" aria-hidden="true" /> ACP Runs
-                          {state.acpRuns.totalActive > 0 && (
-                            <Badge variant="outline" className="ml-1 rounded-full border-emerald-500/20 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium px-2">
-                              {state.acpRuns.totalActive} active
-                            </Badge>
-                          )}
-                        </CardTitle>
-                        <CardAction>
-                          <span className="text-xs text-zinc-500">{state.metrics.acpTotalRuns} session{state.metrics.acpTotalRuns === 1 ? '' : 's'} detected</span>
-                        </CardAction>
-                      </CardHeader>
-                      <CardContent>
-                        {state.acpRuns.active.length === 0 && state.acpRuns.recent.length === 0 ? (
-                          <Empty className="border border-dashed border-white/8">
-                            <EmptyHeader>
-                              <EmptyMedia variant="icon"><Zap className="text-zinc-500" /></EmptyMedia>
-                              <EmptyTitle className="text-zinc-400">No ACP runs detected</EmptyTitle>
-                              <EmptyDescription>Claude Code and other ACP sessions will appear here when active.</EmptyDescription>
-                            </EmptyHeader>
-                          </Empty>
-                        ) : (
-                          <ItemGroup>
-                            {[...state.acpRuns.active, ...state.acpRuns.recent].map((run) => (
-                              <Item key={run.sessionId} variant="outline" className="border-white/7 bg-white/[0.02] hover:border-white/12 flex-col items-stretch">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <ItemTitle className="text-zinc-100 flex-wrap gap-2">
-                                      {run.status === 'running' ? (
-                                        <span className="inline-flex items-center gap-1.5">
-                                          <span className="relative flex h-2 w-2">
-                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                                            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                                          </span>
-                                          <span className="text-emerald-300 text-xs font-medium">Running</span>
-                                        </span>
-                                      ) : (
-                                        <Pill toneKey={run.status === 'idle' ? 'info' : 'inactive'}>{run.status === 'idle' ? 'Idle' : 'Completed'}</Pill>
-                                      )}
-                                      <span className="text-[10px] text-zinc-500 font-display uppercase tracking-wider">{run.harness}</span>
-                                    </ItemTitle>
-                                    <ItemDescription className="text-zinc-300 mt-1">{run.task}</ItemDescription>
-                                  </div>
-                                  <div className="shrink-0 text-right">
-                                    {run.status === 'running' && <div className="text-xs font-display text-cyan-300 tabular-nums">{run.elapsed}</div>}
-                                    <span className="text-xs text-zinc-500">{run.lastUpdatedLabel}</span>
-                                  </div>
-                                </div>
-                                <Separator className="my-1.5 bg-white/5" />
-                                <div className="grid gap-1.5 text-xs text-zinc-400 md:grid-cols-2">
-                                  <div><span className="text-zinc-500">Session:</span> <span className="font-display">{run.sessionId.slice(0, 8)}</span></div>
-                                  <div><span className="text-zinc-500">Model:</span> <span className="font-display">{run.model ?? '\u2014'}</span></div>
-                                  {run.project && <div className="flex items-center gap-1"><span className="text-zinc-500">Project:</span> <span className="font-display truncate">{run.project}</span></div>}
-                                  {run.gitBranch && <div><span className="text-zinc-500">Branch:</span> <span className="font-display">{run.gitBranch}</span></div>}
-                                  {run.workingDirectory && <div className="md:col-span-2"><span className="text-zinc-500">CWD:</span> <span className="font-display truncate">{run.workingDirectory}</span></div>}
-                                  {run.version && <div><span className="text-zinc-500">Version:</span> <span className="font-display">{run.version}</span></div>}
-                                  {run.status !== 'running' && <div><span className="text-zinc-500">Duration:</span> <span className="font-display tabular-nums">{run.elapsed}</span></div>}
-                                </div>
-                              </Item>
-                            ))}
-                          </ItemGroup>
-                        )}
-                      </CardContent>
-                    </Card>
+                  <Tabs value={sessionsTab} onValueChange={(v) => setSessionsTab(v as 'recent' | 'acp')} className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <TabsList className="h-auto w-full justify-start rounded-2xl border border-white/8 bg-white/[0.03] p-1 md:w-auto">
+                        <TabsTrigger
+                          value="recent"
+                          className="rounded-xl px-3 py-2 text-xs text-zinc-400 data-[state=active]:bg-white/8 data-[state=active]:text-zinc-100"
+                        >
+                          <Activity className="h-3.5 w-3.5" aria-hidden="true" />
+                          Recent Sessions
+                          <Badge variant="outline" className="ml-1 rounded-full border-white/10 bg-white/[0.04] px-1.5 text-[10px] text-zinc-400">
+                            {state.recentSessions.length}
+                          </Badge>
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="acp"
+                          className="rounded-xl px-3 py-2 text-xs text-zinc-400 data-[state=active]:bg-white/8 data-[state=active]:text-zinc-100"
+                        >
+                          <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+                          ACP Runs
+                          <Badge variant="outline" className="ml-1 rounded-full border-cyan-500/20 bg-cyan-500/10 px-1.5 text-[10px] text-cyan-300">
+                            {state.metrics.acpTotalRuns}
+                          </Badge>
+                        </TabsTrigger>
+                      </TabsList>
 
-                    {/* ── OpenClaw Sessions ── */}
-                    <Card className={cardClass}>
-                      <CardHeader><CardTitle className="text-base font-semibold" style={{ textWrap: 'balance' }}>Recent Sessions</CardTitle></CardHeader>
-                    <CardContent>
-                      {state.recentSessions.length === 0 ? (
-                        <Empty className="border border-dashed border-white/8">
-                          <EmptyHeader>
-                            <EmptyMedia variant="icon"><Activity className="text-zinc-500" /></EmptyMedia>
-                            <EmptyTitle className="text-zinc-400">No sessions recorded yet</EmptyTitle>
-                            <EmptyDescription>Sessions will appear here as agents run.</EmptyDescription>
-                          </EmptyHeader>
-                        </Empty>
-                      ) : (
-                        <ItemGroup>
-                          {state.recentSessions.slice(0, sessionsLimit).map((s) => (
-                            <Item key={s.sessionKey} variant="outline" className="border-white/7 bg-white/[0.02] hover:border-white/12 flex-col items-stretch">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                  <ItemTitle className="text-zinc-100 flex-wrap">
-                                    {s.agentId} <span className="text-zinc-500">/</span> <span className="font-display text-xs">{s.sessionId}</span>
-                                    <Pill toneKey={s.isRecent ? 'active' : 'inactive'}>{s.isRecent ? 'Recent' : 'Older'}</Pill>
-                                  </ItemTitle>
-                                  <ItemDescription className="text-zinc-400">{s.label ?? s.sessionKey}</ItemDescription>
-                                </div>
-                                <span className="shrink-0 text-xs text-zinc-400">{s.updatedLabel}</span>
-                              </div>
-                              <Separator className="my-1 bg-white/5" />
-                              <div className="grid gap-1.5 text-xs text-zinc-400 md:grid-cols-2">
-                                <div><span className="text-zinc-500">Channel:</span> {s.channel}</div>
-                                <div><span className="text-zinc-500">Model:</span> <span className="font-display">{s.model}</span></div>
-                                <div><span className="text-zinc-500">Depth:</span> <span style={{ fontVariantNumeric: 'tabular-nums' }}>{s.spawnDepth}</span></div>
-                                <div className="min-w-0"><span className="text-zinc-500">File:</span> <span className="font-display truncate">{s.sessionFile ?? '\u2014'}</span></div>
-                              </div>
-                            </Item>
-                          ))}
-                          {state.recentSessions.length > sessionsLimit && (
-                            <Button variant="outline" onClick={() => setSessionsLimit((n) => n + 20)} className="w-full border-dashed border-white/8 text-zinc-400 hover:border-white/15 hover:text-zinc-200">
-                              Show more ({state.recentSessions.length - sessionsLimit} remaining)
-                            </Button>
+                      <div className="text-xs text-zinc-500">
+                        {sessionsTab === 'recent'
+                          ? `${state.recentSessions.length} session${state.recentSessions.length === 1 ? '' : 's'} visible in OpenClaw`
+                          : `${state.metrics.acpTotalRuns} ACP run${state.metrics.acpTotalRuns === 1 ? '' : 's'} detected`}
+                      </div>
+                    </div>
+
+                    <TabsContent value="recent" className="mt-0">
+                      <Card className={cardClass}>
+                        <CardHeader>
+                          <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ textWrap: 'balance' }}>
+                            <Activity className="h-4 w-4 text-orange-300" aria-hidden="true" /> Recent Sessions
+                          </CardTitle>
+                          <CardDescription className="text-zinc-500">Latest OpenClaw session activity, optimized for quick scanning.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          {state.recentSessions.length === 0 ? (
+                            <Empty className="border border-dashed border-white/8">
+                              <EmptyHeader>
+                                <EmptyMedia variant="icon"><Activity className="text-zinc-500" /></EmptyMedia>
+                                <EmptyTitle className="text-zinc-400">No sessions recorded yet</EmptyTitle>
+                                <EmptyDescription>Sessions will appear here as agents run.</EmptyDescription>
+                              </EmptyHeader>
+                            </Empty>
+                          ) : (
+                            <ItemGroup>
+                              {state.recentSessions.slice(0, sessionsLimit).map((s) => (
+                                <Item key={s.sessionKey} variant="outline" className="border-white/7 bg-white/[0.02] hover:border-white/12 flex-col items-stretch">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <ItemTitle className="text-zinc-100 flex-wrap">
+                                        {s.agentId} <span className="text-zinc-500">/</span> <span className="font-display text-xs">{s.sessionId}</span>
+                                        <Pill toneKey={s.isRecent ? 'active' : 'inactive'}>{s.isRecent ? 'Recent' : 'Older'}</Pill>
+                                      </ItemTitle>
+                                      <ItemDescription className="text-zinc-400">{s.label ?? s.sessionKey}</ItemDescription>
+                                    </div>
+                                    <span className="shrink-0 text-xs text-zinc-400">{s.updatedLabel}</span>
+                                  </div>
+                                  <Separator className="my-1 bg-white/5" />
+                                  <div className="grid gap-1.5 text-xs text-zinc-400 md:grid-cols-2">
+                                    <div><span className="text-zinc-500">Channel:</span> {s.channel}</div>
+                                    <div><span className="text-zinc-500">Model:</span> <span className="font-display">{s.model}</span></div>
+                                    <div><span className="text-zinc-500">Depth:</span> <span style={{ fontVariantNumeric: 'tabular-nums' }}>{s.spawnDepth}</span></div>
+                                    <div className="min-w-0"><span className="text-zinc-500">File:</span> <span className="font-display truncate">{s.sessionFile ?? '\u2014'}</span></div>
+                                  </div>
+                                </Item>
+                              ))}
+                              {state.recentSessions.length > sessionsLimit && (
+                                <Button variant="outline" onClick={() => setSessionsLimit((n) => n + 20)} className="w-full border-dashed border-white/8 text-zinc-400 hover:border-white/15 hover:text-zinc-200">
+                                  Show more ({state.recentSessions.length - sessionsLimit} remaining)
+                                </Button>
+                              )}
+                            </ItemGroup>
                           )}
-                        </ItemGroup>
-                      )}
-                    </CardContent>
-                  </Card>
-                  </div>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="acp" className="mt-0">
+                      <Card className={cardClass}>
+                        <CardHeader>
+                          <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ textWrap: 'balance' }}>
+                            <Zap className="h-4 w-4 text-cyan-300" aria-hidden="true" /> ACP Runs
+                            {state.acpRuns.totalActive > 0 && (
+                              <Badge variant="outline" className="ml-1 rounded-full border-emerald-500/20 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium px-2">
+                                {state.acpRuns.totalActive} active
+                              </Badge>
+                            )}
+                          </CardTitle>
+                          <CardDescription className="text-zinc-500">Claude Code and other ACP harness activity in a dedicated lane.</CardDescription>
+                          <CardAction>
+                            <span className="text-xs text-zinc-500">{state.metrics.acpTotalRuns} session{state.metrics.acpTotalRuns === 1 ? '' : 's'} detected</span>
+                          </CardAction>
+                        </CardHeader>
+                        <CardContent>
+                          {state.acpRuns.active.length === 0 && state.acpRuns.recent.length === 0 ? (
+                            <Empty className="border border-dashed border-white/8">
+                              <EmptyHeader>
+                                <EmptyMedia variant="icon"><Zap className="text-zinc-500" /></EmptyMedia>
+                                <EmptyTitle className="text-zinc-400">No ACP runs detected</EmptyTitle>
+                                <EmptyDescription>Claude Code and other ACP sessions will appear here when active.</EmptyDescription>
+                              </EmptyHeader>
+                            </Empty>
+                          ) : (
+                            <ItemGroup>
+                              {[...state.acpRuns.active, ...state.acpRuns.recent].map((run) => (
+                                <Item key={run.sessionId} variant="outline" className="border-white/7 bg-white/[0.02] hover:border-white/12 flex-col items-stretch">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <ItemTitle className="text-zinc-100 flex-wrap gap-2">
+                                        {run.status === 'running' ? (
+                                          <span className="inline-flex items-center gap-1.5">
+                                            <span className="relative flex h-2 w-2">
+                                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                                              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                                            </span>
+                                            <span className="text-emerald-300 text-xs font-medium">Running</span>
+                                          </span>
+                                        ) : (
+                                          <Pill toneKey={run.status === 'idle' ? 'info' : 'inactive'}>{run.status === 'idle' ? 'Idle' : 'Completed'}</Pill>
+                                        )}
+                                        <span className="text-[10px] text-zinc-500 font-display uppercase tracking-wider">{run.harness}</span>
+                                      </ItemTitle>
+                                      <ItemDescription className="text-zinc-300 mt-1">{run.task}</ItemDescription>
+                                    </div>
+                                    <div className="shrink-0 text-right">
+                                      {run.status === 'running' && <div className="text-xs font-display text-cyan-300 tabular-nums">{run.elapsed}</div>}
+                                      <span className="text-xs text-zinc-500">{run.lastUpdatedLabel}</span>
+                                    </div>
+                                  </div>
+                                  <Separator className="my-1.5 bg-white/5" />
+                                  <div className="grid gap-1.5 text-xs text-zinc-400 md:grid-cols-2">
+                                    <div><span className="text-zinc-500">Session:</span> <span className="font-display">{run.sessionId.slice(0, 8)}</span></div>
+                                    <div><span className="text-zinc-500">Model:</span> <span className="font-display">{run.model ?? '\u2014'}</span></div>
+                                    {run.project && <div className="flex items-center gap-1"><span className="text-zinc-500">Project:</span> <span className="font-display truncate">{run.project}</span></div>}
+                                    {run.gitBranch && <div><span className="text-zinc-500">Branch:</span> <span className="font-display">{run.gitBranch}</span></div>}
+                                    {run.workingDirectory && <div className="md:col-span-2"><span className="text-zinc-500">CWD:</span> <span className="font-display truncate">{run.workingDirectory}</span></div>}
+                                    {run.version && <div><span className="text-zinc-500">Version:</span> <span className="font-display">{run.version}</span></div>}
+                                    {run.status !== 'running' && <div><span className="text-zinc-500">Duration:</span> <span className="font-display tabular-nums">{run.elapsed}</span></div>}
+                                  </div>
+                                </Item>
+                              ))}
+                            </ItemGroup>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
                 )}
               </TabsContent>
 
