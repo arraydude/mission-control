@@ -120,3 +120,4 @@ The local APIs also work in preview mode, so the built app still reads real Open
 3. Create a task in the left-hand capture panel.
 4. Assign an agent owner and set the starting lane.
 5. Use the board to move work across `Inbox → Ready → Doing → Blocked → Done` as the morning unfolds.
+- Use `npm run build` before shipping UI changes to keep Mission Control healthy.
