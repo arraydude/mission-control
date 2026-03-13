@@ -237,13 +237,13 @@ const TASK_STATUSES: Array<{ id: MissionTaskStatus; label: string }> = [
 const PRIORITY_TONES: Record<MissionTaskPriority, string> = {
   low: 'text-muted-foreground bg-zinc-500/10 border-zinc-500/20',
   medium: 'text-cyan-200 bg-cyan-500/10 border-cyan-500/20',
-  high: 'text-primary bg-orange-500/10 border-orange-500/20',
+  high: 'text-primary bg-pink-500/10 border-pink-500/20',
 }
 
 const STATUS_ACCENTS: Record<MissionTaskStatus, string> = {
   inbox: 'border-zinc-500/20',
   ready: 'border-cyan-500/20',
-  doing: 'border-orange-500/20',
+  doing: 'border-pink-500/20',
   in_review: 'border-violet-500/20',
   blocked: 'border-red-500/20',
   done: 'border-emerald-500/20',
@@ -252,7 +252,7 @@ const STATUS_ACCENTS: Record<MissionTaskStatus, string> = {
 const STATUS_DOTS: Record<MissionTaskStatus, string> = {
   inbox: 'text-muted-foreground',
   ready: 'text-cyan-400',
-  doing: 'text-orange-400',
+  doing: 'text-pink-400',
   in_review: 'text-violet-400',
   blocked: 'text-red-400',
   done: 'text-emerald-400',
@@ -288,7 +288,7 @@ type ToneKey = 'active' | 'inactive' | 'warning' | 'critical' | 'info'
 const toneBadge: Record<ToneKey, string> = {
   active: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
   inactive: 'text-muted-foreground bg-zinc-500/10 border-zinc-500/20',
-  warning: 'text-primary bg-orange-500/10 border-orange-500/20',
+  warning: 'text-primary bg-pink-500/10 border-pink-500/20',
   critical: 'text-red-200 bg-red-500/10 border-red-500/20',
   info: 'text-cyan-200 bg-cyan-500/10 border-cyan-500/20',
 }
@@ -489,7 +489,7 @@ function TaskCardItem({
                 </span>
               </TaskPill>
               {task.claim?.claimedBy && (
-                <TaskPill className="text-primary bg-orange-500/10 border-orange-500/20">
+                <TaskPill className="text-primary bg-pink-500/10 border-pink-500/20">
                   <span className="inline-flex items-center gap-1">
                     <Lock className="h-2.5 w-2.5" aria-hidden="true" />
                     {task.claim.claimedBy}
@@ -748,7 +748,7 @@ function TaskCardItem({
 
 const LOG_SEVERITY_TONES: Record<AgentLogEntry['severity'], string> = {
   info: 'text-primary bg-cyan-500/10 border-cyan-500/20',
-  warning: 'text-primary bg-orange-500/10 border-orange-500/20',
+  warning: 'text-primary bg-pink-500/10 border-pink-500/20',
   error: 'text-red-300 bg-red-500/10 border-red-500/20',
 }
 
@@ -1226,7 +1226,7 @@ export default function App() {
                       <span>{item.label}</span>
                     </SidebarMenuButton>
                     {item.id === 'tasks' && taskMetrics.inFlight > 0 && (
-                      <SidebarMenuBadge className="bg-orange-500/10 text-primary">{taskMetrics.inFlight}</SidebarMenuBadge>
+                      <SidebarMenuBadge className="bg-pink-500/10 text-primary">{taskMetrics.inFlight}</SidebarMenuBadge>
                     )}
                     {item.id === 'sessions' && state && state.metrics.acpActiveRuns > 0 && (
                       <SidebarMenuBadge className="bg-emerald-500/10 text-emerald-300">{state.metrics.acpActiveRuns} ACP</SidebarMenuBadge>
@@ -1245,7 +1245,7 @@ export default function App() {
               <SidebarGroupLabel className="text-muted-foreground">Alerts</SidebarGroupLabel>
               <SidebarGroupContent>
                 <div className="px-2">
-                  <Alert className="border-orange-500/20 bg-orange-500/5">
+                  <Alert className="border-pink-500/20 bg-pink-500/5">
                     <TriangleAlert className="h-3.5 w-3.5 text-primary" />
                     <AlertTitle className="text-primary text-xs">{state.metrics.blockers} blocker{state.metrics.blockers === 1 ? '' : 's'}</AlertTitle>
                   </Alert>
