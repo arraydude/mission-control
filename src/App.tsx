@@ -353,7 +353,7 @@ function StatCard({ label, value, hint, icon: Icon }: { label: string; value: st
 
 function LoadingSkeleton() {
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
         <Card key={i}>
           <CardHeader><Skeleton className="h-4 w-24" /></CardHeader>
@@ -470,7 +470,7 @@ function TaskCardItem({
   return (
     <Dialog>
       <DialogTrigger
-        className="w-full text-left rounded-xl border border-border bg-card p-3.5 shadow-sm transition-colors hover:ring-1 hover:ring-foreground/15 cursor-pointer"
+        className="w-full text-left rounded-lg border border-border bg-card p-2.5 shadow-sm transition-colors hover:ring-1 hover:ring-foreground/15 cursor-pointer"
         aria-label={`Open details for ${task.title}`}
       >
         <div className="flex items-start justify-between gap-2">
@@ -559,7 +559,7 @@ function TaskCardItem({
 
           {/* ── Routing reason (compact, only when auto-routed) ── */}
           {task.routing?.autoRouted && task.routing.routingReason && (
-            <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-3 py-2">
+            <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2">
               <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-violet-400 mb-0.5">
                 <Route className="h-3 w-3" aria-hidden="true" />
                 Routing Decision
@@ -570,7 +570,7 @@ function TaskCardItem({
 
           {/* ── Result summary (prominent for done tasks) ── */}
           {task.resultSummary && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
               <div className="text-[10px] font-medium uppercase tracking-wider text-emerald-400 mb-1">Result</div>
               <p className="text-sm text-emerald-200 leading-5">{task.resultSummary}</p>
             </div>
@@ -578,7 +578,7 @@ function TaskCardItem({
 
           {/* ── Editable fields ── */}
           {editMode ? (
-            <form onSubmit={handleSaveEdits} className="space-y-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3.5">
+            <form onSubmit={handleSaveEdits} className="space-y-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2.5">
               <div className="grid gap-1.5">
                 <Label className="text-xs text-muted-foreground">Title</Label>
                 <Input
@@ -586,7 +586,7 @@ function TaskCardItem({
                   onChange={(e) => setEditForm((current) => ({ ...current, title: e.target.value }))}
                   disabled={isSavingTask}
                   autoComplete="off"
-                  className="rounded-xl border-border bg-muted/50 text-foreground focus:border-ring"
+                  className="rounded-lg border-border bg-muted/50 text-foreground focus:border-ring"
                   placeholder="Task title"
                 />
               </div>
@@ -597,7 +597,7 @@ function TaskCardItem({
                   value={editForm.description}
                   onChange={(e) => setEditForm((current) => ({ ...current, description: e.target.value }))}
                   disabled={isSavingTask}
-                  className="min-h-24 w-full rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
+                  className="min-h-24 w-full rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
                   placeholder="Context, constraints, notes..."
                 />
               </div>
@@ -639,7 +639,7 @@ function TaskCardItem({
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="grid gap-1">
                 <Label className="text-xs text-muted-foreground">Owner</Label>
-                <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
+                <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
                   <span className="inline-flex items-center gap-1.5">
                     {assignedAgent ? <AgentIdentityLabel agent={assignedAgent} /> : 'Unassigned'}
                     {task.routing?.autoRouted && (
@@ -650,13 +650,13 @@ function TaskCardItem({
               </div>
               <div className="grid gap-1">
                 <Label className="text-xs text-muted-foreground">Status</Label>
-                <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
+                <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
                   {TASK_STATUSES.find((statusOption) => statusOption.id === task.status)?.label ?? task.status}
                 </div>
               </div>
               <div className="grid gap-1">
                 <Label className="text-xs text-muted-foreground">Priority</Label>
-                <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
+                <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
                   {task.priority}
                 </div>
               </div>
@@ -680,7 +680,7 @@ function TaskCardItem({
           </div>
 
           {showCommentForm && (
-            <form onSubmit={handleAddComment} className="rounded-xl border border-border bg-muted/30 p-2.5 space-y-2">
+            <form onSubmit={handleAddComment} className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-2">
               <div className="flex gap-2">
                 <Input
                   value={commentAuthor}
@@ -867,9 +867,9 @@ function AgentDetailDialog({ agent }: { agent: AgentCard }) {
               <Spinner className="text-primary" /> Loading logs&hellip;
             </div>
           ) : logsError ? (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-300">{logsError}</div>
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-300">{logsError}</div>
           ) : logs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
               No recent logs found for this agent.
             </div>
           ) : (
@@ -940,7 +940,7 @@ function TaskBoard({
             {TASK_STATUSES.map((column) => {
               const columnTasks = tasks.filter((t) => t.status === column.id)
               return (
-                <div key={column.id} className={`rounded-xl border bg-muted/30 p-3 ${STATUS_ACCENTS[column.id]}`}>
+                <div key={column.id} className={`rounded-lg border bg-muted/30 p-3 ${STATUS_ACCENTS[column.id]}`}>
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Circle className={`h-2 w-2 fill-current ${STATUS_DOTS[column.id]}`} aria-hidden="true" />
@@ -1191,10 +1191,10 @@ export default function App() {
   }, [])
 
   return (
-    <SidebarProvider style={{ '--sidebar-width': '19rem' } as React.CSSProperties}>
+    <SidebarProvider style={{ '--sidebar-width': '17rem' } as React.CSSProperties}>
       {/* ── Sidebar ── */}
       <Sidebar variant="floating">
-        <SidebarHeader className="p-4">
+        <SidebarHeader className="p-3">
           <div className="flex items-center gap-2.5">
             <Badge variant="outline" className="rounded-full border-sidebar-primary/20 bg-sidebar-primary/10 uppercase tracking-[0.2em] text-sidebar-primary">
               <Wrench className="h-3 w-3" aria-hidden="true" /> MC
@@ -1255,7 +1255,7 @@ export default function App() {
           )}
         </SidebarContent>
 
-        <SidebarFooter className="p-3">
+        <SidebarFooter className="p-2.5">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1277,8 +1277,8 @@ export default function App() {
           {loading && !state && <Spinner className="text-primary" />}
         </header>
 
-        <div className="flex-1 px-5 py-4 md:px-8">
-          <div className="mx-auto flex max-w-7xl flex-col gap-5">
+        <div className="flex-1 px-4 py-3 md:px-6">
+          <div className="mx-auto flex max-w-7xl flex-col gap-3">
             {error && !state ? (
               <Alert variant="destructive" className={cardClass}>
                 <AlertCircle className="h-4 w-4" />
@@ -1295,14 +1295,14 @@ export default function App() {
 
               {/* ══════════════════ DASHBOARD ══════════════════ */}
               <TabsContent value="dashboard">
-                <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-3">
                   {loading && !state ? <LoadingSkeleton /> : state ? (
-                    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       {metrics.map((m) => <StatCard key={m.label} {...m} />)}
                     </section>
                   ) : null}
 
-                  <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                  <section className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
                     <Card className={cardClass}>
                       <CardHeader>
                         <CardTitle className="text-base font-semibold" style={{ textWrap: 'balance' }}>At a Glance</CardTitle>
@@ -1313,8 +1313,8 @@ export default function App() {
                         </CardAction>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="rounded-xl border border-border bg-muted/30 p-4">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="rounded-lg border border-border bg-muted/30 p-3">
                             <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
                               <TriangleAlert className="h-3.5 w-3.5 text-primary" aria-hidden="true" /> Attention
                             </div>
@@ -1326,7 +1326,7 @@ export default function App() {
                                 </Alert>
                               ) : (
                                 dashboardWarnings.map((w, i) => (
-                                  <div key={`${w.title}-${i}`} className="rounded-xl border border-border bg-card p-3">
+                                  <div key={`${w.title}-${i}`} className="rounded-lg border border-border bg-card p-3">
                                     <Pill toneKey={w.toneKey}>{w.title}</Pill>
                                     <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{w.body}</p>
                                   </div>
@@ -1335,7 +1335,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="rounded-xl border border-border bg-muted/30 p-4">
+                          <div className="rounded-lg border border-border bg-muted/30 p-3">
                             <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
                               <KanbanSquare className="h-3.5 w-3.5 text-primary" aria-hidden="true" /> Tasks
                             </div>
@@ -1346,7 +1346,7 @@ export default function App() {
                                 { label: 'Unassigned', value: taskMetrics.unassigned },
                                 { label: 'Done', value: taskMetrics.done },
                               ].map((item) => (
-                                <div key={item.label} className="rounded-xl border border-border bg-card p-3">
+                                <div key={item.label} className="rounded-lg border border-border bg-card p-3">
                                   <div className="text-xs uppercase tracking-[0.15em] text-muted-foreground">{item.label}</div>
                                   <div className="font-display mt-1 text-xl font-semibold text-foreground" style={{ fontVariantNumeric: 'tabular-nums' }}>{item.value}</div>
                                 </div>
@@ -1364,7 +1364,7 @@ export default function App() {
                       <CardHeader><CardTitle className="text-base font-semibold" style={{ textWrap: 'balance' }}>Focus</CardTitle></CardHeader>
                       <CardContent>
                         <div className="space-y-4">
-                          <div className="rounded-xl border border-border bg-muted/30 p-4">
+                          <div className="rounded-lg border border-border bg-muted/30 p-3">
                             <div className="mb-2 text-sm font-medium text-foreground">Where attention should go</div>
                             <ItemGroup>
                               {(state?.focus ?? []).length === 0 ? (
@@ -1379,7 +1379,7 @@ export default function App() {
                             </ItemGroup>
                           </div>
 
-                          <div className="rounded-xl border border-border bg-muted/30 p-4">
+                          <div className="rounded-lg border border-border bg-muted/30 p-3">
                             <div className="mb-2 text-sm font-medium text-foreground">Gateway</div>
                             <div className="space-y-2 text-sm text-muted-foreground">
                               <div className="flex items-center justify-between"><span>Service</span><span className="font-display text-xs text-foreground">{state?.gateway.service}</span></div>
@@ -1416,7 +1416,7 @@ export default function App() {
                       <CardContent>
                         <div className="space-y-2">
                           {state.acpRuns.active.map((run) => (
-                            <div key={run.sessionId} className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.03] p-3">
+                            <div key={run.sessionId} className="rounded-lg border border-emerald-500/15 bg-emerald-500/[0.03] p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2 mb-1">
@@ -1441,7 +1441,7 @@ export default function App() {
                             </div>
                           ))}
                           {state.acpRuns.recent.slice(0, 3).map((run) => (
-                            <div key={run.sessionId} className="rounded-xl border border-border bg-muted/30 p-3">
+                            <div key={run.sessionId} className="rounded-lg border border-border bg-muted/30 p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2 mb-1">
@@ -1463,7 +1463,7 @@ export default function App() {
                     </Card>
                   )}
 
-                  <section className="grid gap-5 xl:grid-cols-2">
+                  <section className="grid gap-3 xl:grid-cols-2">
                     {/* Recent Activity */}
                     <Card className={cardClass}>
                       <CardHeader>
@@ -1542,7 +1542,7 @@ export default function App() {
                       <CardContent>
                         <div className="grid gap-2 lg:grid-cols-2">
                           {tasksNeedingAttention.map((t) => (
-                            <button key={t.id} type="button" onClick={() => setActiveView('tasks')} className="rounded-xl border border-border bg-muted/30 p-3 text-left transition-colors hover:border-border hover:bg-muted/60">
+                            <button key={t.id} type="button" onClick={() => setActiveView('tasks')} className="rounded-lg border border-border bg-muted/30 p-3 text-left transition-colors hover:border-border hover:bg-muted/60">
                               <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                                 <TaskPill className={`border ${STATUS_ACCENTS[t.status]} bg-muted/50 text-muted-foreground`}>{TASK_STATUSES.find((s) => s.id === t.status)?.label}</TaskPill>
                                 <TaskPill className={PRIORITY_TONES[t.priority]}>{t.priority}</TaskPill>
@@ -1567,7 +1567,7 @@ export default function App() {
 
               {/* ══════════════════ TASKS ══════════════════ */}
               <TabsContent value="tasks">
-                <section className="flex flex-col gap-5">
+                <section className="flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <h2 className="text-base font-semibold text-foreground" style={{ textWrap: 'balance' }}>Task Management</h2>
                     <Button variant="outline" size="sm" onClick={() => setShowCreateForm(!showCreateForm)} className="rounded-full border-primary/30 bg-primary/10 text-xs text-primary-foreground hover:bg-primary/20">
@@ -1582,11 +1582,11 @@ export default function App() {
                           <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
                             <div className="grid gap-1.5">
                               <Label className="text-xs text-muted-foreground">Title</Label>
-                              <Input ref={titleInputRef} name="title" autoComplete="off" className="rounded-xl border-border bg-muted/50 text-foreground focus:border-ring" value={form.title} onChange={(e) => setForm((c) => ({ ...c, title: e.target.value }))} placeholder="What needs doing&hellip;" />
+                              <Input ref={titleInputRef} name="title" autoComplete="off" className="rounded-lg border-border bg-muted/50 text-foreground focus:border-ring" value={form.title} onChange={(e) => setForm((c) => ({ ...c, title: e.target.value }))} placeholder="What needs doing&hellip;" />
                             </div>
                             <div className="grid gap-1.5">
                               <Label className="text-xs text-muted-foreground">Notes</Label>
-                              <Input name="description" autoComplete="off" className="rounded-xl border-border bg-muted/50 text-foreground focus:border-ring" value={form.description} onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))} placeholder="Context, constraints&hellip;" />
+                              <Input name="description" autoComplete="off" className="rounded-lg border-border bg-muted/50 text-foreground focus:border-ring" value={form.description} onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))} placeholder="Context, constraints&hellip;" />
                             </div>
                           </div>
                           <div className="flex flex-wrap items-end gap-3">
@@ -1658,12 +1658,12 @@ export default function App() {
               {/* ══════════════════ SESSIONS ══════════════════ */}
               <TabsContent value="sessions">
                 {state && (
-                  <Tabs value={sessionsTab} onValueChange={(v) => setSessionsTab(v as 'recent' | 'acp')} className="flex flex-col gap-5">
+                  <Tabs value={sessionsTab} onValueChange={(v) => setSessionsTab(v as 'recent' | 'acp')} className="flex flex-col gap-3">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <TabsList className="h-auto w-full justify-start rounded-xl border border-border bg-muted/50 p-1 md:w-auto">
+                      <TabsList className="h-auto w-full justify-start rounded-lg border border-border bg-muted/50 p-1 md:w-auto">
                         <TabsTrigger
                           value="recent"
-                          className="rounded-xl px-3 py-2 text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+                          className="rounded-lg px-3 py-2 text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
                         >
                           <Activity className="h-3.5 w-3.5" aria-hidden="true" />
                           Recent Sessions
@@ -1673,7 +1673,7 @@ export default function App() {
                         </TabsTrigger>
                         <TabsTrigger
                           value="acp"
-                          className="rounded-xl px-3 py-2 text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+                          className="rounded-lg px-3 py-2 text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
                         >
                           <Zap className="h-3.5 w-3.5" aria-hidden="true" />
                           ACP Runs
@@ -1817,8 +1817,8 @@ export default function App() {
               {/* ══════════════════ SYSTEM ══════════════════ */}
               <TabsContent value="system">
                 {state && (
-                  <section className="grid gap-5 xl:grid-cols-2">
-                    <div className="flex flex-col gap-5">
+                  <section className="grid gap-3 xl:grid-cols-2">
+                    <div className="flex flex-col gap-3">
                       <Card className={cardClass}>
                         <CardHeader><CardTitle className="text-base font-semibold" style={{ textWrap: 'balance' }}>Gateway &amp; Channels</CardTitle></CardHeader>
                         <CardContent>
